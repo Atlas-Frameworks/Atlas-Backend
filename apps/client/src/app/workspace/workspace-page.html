@@ -11,7 +11,11 @@
   <span class="brand">Atlas</span>
   <span class="muted scope">{{ session()?.label }}</span>
   <span class="spacer"></span>
-  <app-connection-status connection="idle" />
+  <app-connection-status
+    [connection]="connection()"
+    [staleSince]="staleSince()"
+    [attr.title]="lastError()?.message ?? null"
+  />
   <button
     type="button"
     class="btn"
@@ -47,6 +51,10 @@
     </header>
     <div class="panel-body">
       <p class="muted">Filters, grouping and live pages (A-04).</p>
+      <p class="live-total">
+        Airplanes in scope:
+        <strong>{{ airplanesPage.loading() ? '…' : airplanesPage.total() }}</strong>
+      </p>
     </div>
   </aside>
 

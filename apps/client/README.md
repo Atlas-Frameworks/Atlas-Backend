@@ -32,3 +32,31 @@ the view-service exist.
 Styles: design tokens (colors, spacing, radii, type, layout) are SCSS maps in
 `src/styles/_tokens.scss`, emitted once as `--atlas-*` custom properties; the theme is dark, tuned
 for a map background.
+
+## Realtime service (A-02)
+
+`AtlasRealtimeService` (`src/app/realtime/`) wraps `createAtlasClient` from `@atlas/client-sdk`. The
+SDK core runs in a Web Worker (`sdk.worker.ts`, bundled by the Angular builder); one client per
+signed-in session is created lazily on first use, gets new tokens, and is destroyed on sign-out.
+
+```ts
+readonly rt = inject(AtlasRealtimeService);
+rt.connectionStatus();  // 'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed'
+rt.staleSince();        // ms or null; rt.stale(), rt.lastError(), rt.status()
+
+// In an injection context (field initializer, constructor) these clean up with the component;
+// elsewhere pass { destroyRef }.
+readonly view = this.rt.openView({ entityType: 'airplanes', filter });  // scope = the session's
+readonly page = this.rt.subscribePage(this.view, { pageSize: 50 });      // rows(), total(), groupCounts(), loading(), stale()
+readonly detail = this.rt.openDetail('airplanes', id);                  // row(), removed(), loading(), stale()
+page.dispose();                                                         // or let DestroyRef do it
+
+// Map frames never become signals: the adapter gets them straight from the SDK, outside
+// change detection.
+rt.subscribeMap(view);
+const detach = rt.attachMap(adapter);
+```
+
+Workspace packages resolve to their TypeScript sources: `conditions: ["@atlas/source", …]` in
+`angular.json` (also applied to the worker bundle), `customConditions` in `tsconfig.json`, and
+`prebundle.exclude` for the dev server (otherwise Vite would load a stale `dist/`).

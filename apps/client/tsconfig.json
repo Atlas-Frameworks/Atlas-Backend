@@ -13,7 +13,11 @@
     "experimentalDecorators": true,
     "importHelpers": true,
     "target": "ES2022",
-    "module": "preserve"
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    // Resolve @atlas/* workspace packages to their TypeScript sources, like the Angular builder
+    // does through the "conditions" option in angular.json; no package build is needed first.
+    "customConditions": ["@atlas/source"]
   },
   "angularCompilerOptions": {
     "enableI18nLegacyMessageIdFormat": false,

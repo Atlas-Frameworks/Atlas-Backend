@@ -29,7 +29,8 @@
                 "input": "public"
               }
             ],
-            "styles": ["src/styles.scss"]
+            "styles": ["src/styles.scss"],
+            "conditions": ["@atlas/source", "module"]
           },
           "configurations": {
             "production": {
@@ -45,18 +46,25 @@
                   "maximumError": "8kB"
                 }
               ],
-              "outputHashing": "all"
+              "outputHashing": "all",
+              "conditions": ["@atlas/source", "module", "production"]
             },
             "development": {
               "optimization": false,
               "extractLicenses": false,
-              "sourceMap": true
+              "sourceMap": true,
+              "conditions": ["@atlas/source", "module", "development"]
             }
           },
           "defaultConfiguration": "production"
         },
         "serve": {
           "builder": "@angular/build:dev-server",
+          "options": {
+            "prebundle": {
+              "exclude": ["@atlas/client-sdk", "@atlas/protocol"]
+            }
+          },
           "configurations": {
             "production": {
               "buildTarget": "client:build:production"
