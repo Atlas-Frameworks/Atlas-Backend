@@ -79,54 +79,81 @@ services:
       interval: 2s
       retries: 60
 
-  # ---------- Redis: primary + replica + 3 Sentinels + master-only proxy (task I-02) ----------
-  # Each node copies its config to a writable path, because Sentinel rewrites node configs on failover.
+  # ---------- Redis: primary + replica + 3 Sentinels + master-only proxy (task I-02, see infra/redis/README.md) ----------
+  # Configs are copied into each container's /data on FIRST start only. Sentinel rewrites them on
+  # failover (replicaof, known replicas), and a restart must keep that, or a restarted old master
+  # would come back as a second master. After editing redis/*.conf, run `npm run infra:down`.
+  # The nodes are not published on the host: after a failover "redis-primary" may be a replica.
+  # Apps use the proxy (localhost:6380); for direct access use `docker compose exec redis-primary redis-cli`.
   redis-primary:
     image: *redis-image
     entrypoint:
-      [
-        "/bin/sh",
-        "-c",
-        "cp /config/redis.conf /data/redis.conf && exec redis-server /data/redis.conf",
-      ]
+      - /bin/sh
+      - -c
+      - >-
+        [ -f /data/redis.conf ] || cp /config/redis.conf /data/redis.conf;
+        exec redis-server /data/redis.conf --replica-announce-ip redis-primary
     volumes:
       - ./redis/redis.conf:/config/redis.conf:ro
-    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 30
 
   redis-replica:
     image: *redis-image
     entrypoint:
-      [
-        "/bin/sh",
-        "-c",
-        "cp /config/redis.conf /data/redis.conf && exec redis-server /data/redis.conf --replicaof redis-primary 6379",
-      ]
+      - /bin/sh
+      - -c
+      - >-
+        [ -f /data/redis.conf ] || { cp /config/redis.conf /data/redis.conf && echo "replicaof redis-primary 6379" >> /data/redis.conf; };
+        exec redis-server /data/redis.conf --replica-announce-ip redis-replica
     volumes:
       - ./redis/redis.conf:/config/redis.conf:ro
-    depends_on: [redis-primary]
+    depends_on:
+      redis-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 30
 
   sentinel-1: &sentinel
     image: *redis-image
     entrypoint:
-      [
-        "/bin/sh",
-        "-c",
-        "cp /config/sentinel.conf /tmp/sentinel.conf && exec redis-sentinel /tmp/sentinel.conf",
-      ]
+      - /bin/sh
+      - -c
+      - >-
+        [ -f /data/sentinel.conf ] || cp /config/sentinel.conf /data/sentinel.conf;
+        exec redis-sentinel /data/sentinel.conf --sentinel announce-ip "$$(hostname)"
+    hostname: sentinel-1
     volumes:
       - ./redis/sentinel.conf:/config/sentinel.conf:ro
-    depends_on: [redis-primary, redis-replica]
-  sentinel-2: *sentinel
-  sentinel-3: *sentinel
+      - ./redis/sentinel-reconfig.sh:/config/sentinel-reconfig.sh:ro
+    depends_on:
+      redis-primary:
+        condition: service_healthy
+      redis-replica:
+        condition: service_healthy
+  sentinel-2:
+    <<: *sentinel
+    hostname: sentinel-2
+  sentinel-3:
+    <<: *sentinel
+    hostname: sentinel-3
 
-  # Debezium's Redis sink has no Sentinel support, so it connects through this proxy,
-  # which only ever routes to the node that currently reports role:master.
+  # Debezium's Redis sink has no Sentinel support, so it connects through this proxy, which only
+  # routes to the node that currently reports role:master and cuts sessions to a demoted node.
   redis-proxy:
     image: haproxy:3.2
     volumes:
       - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     ports: ["6380:6380", "8404:8404"]
-    depends_on: [redis-primary, redis-replica]
+    depends_on:
+      redis-primary:
+        condition: service_healthy
+      redis-replica:
+        condition: service_healthy
 
   # ---------- Debezium Server: outbox -> Redis Streams (task I-03) ----------
   debezium:

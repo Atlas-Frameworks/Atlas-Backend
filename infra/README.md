@@ -6,9 +6,9 @@ Starter `docker-compose.yml` for the POC. It has **not** been started yet in CI.
 | --- | --- | --- | --- |
 | `postgres-primary` | 5432 | Postgres 17, `wal_level=logical`, entities + outbox | I-01, W-01 |
 | `postgres-replica` | 5433 | Streaming read replica that view workers query; syncs Debezium's failover slot | I-01 |
-| `redis-primary` / `redis-replica` | 6379 | Redis Streams (`changes:<type>`), worker lists | I-02 |
+| `redis-primary` / `redis-replica` | – (not published) | Redis Streams (`changes:<type>`), worker lists. Use the proxy | I-02 |
 | `sentinel-1..3` | – | Redis failover | I-02 |
-| `redis-proxy` | 6380, stats 8404 | Master-only endpoint for Debezium (its Redis sink has no Sentinel support) | I-02 |
+| `redis-proxy` | 6380, stats 8404 | Master-only endpoint for Debezium and local apps (see [redis/README.md](redis/README.md)) | I-02 |
 | `debezium` | 8080 (health at `/q/health`) | Outbox → Redis Streams | I-03 |
 
 ```bash

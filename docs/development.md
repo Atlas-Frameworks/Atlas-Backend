@@ -89,7 +89,6 @@ Each Node app validates its environment at startup (`src/config.ts`, using `@atl
 | 3100 | replicator-sim | |
 | 5432 | Postgres primary | Writer: `postgres://atlas_writer:atlas_writer@localhost:5432/atlas` |
 | 5433 | Postgres read replica | Reader: `postgres://atlas_reader:atlas_reader@localhost:5433/atlas` |
-| 6379 | Redis primary (direct) | Use the proxy instead; the primary changes on failover |
 | 6380 | Redis master-only proxy (HAProxy) | `redis://localhost:6380`, always the current master |
 | 8404 | HAProxy stats | http://localhost:8404/stats |
 | 8080 | Debezium Server | Health: http://localhost:8080/q/health |
