@@ -1,0 +1,20 @@
+{
+  "$schema": "../../node_modules/oxlint/configuration_schema.json",
+  "extends": ["../../.oxlintrc.json"],
+  "env": {
+    "browser": true
+  },
+  "rules": {
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": ["@atlas/view-service", "@atlas/replicator-sim", "@atlas/client"],
+            "message": "Packages never depend on apps."
+          }
+        ]
+      }
+    ]
+  }
+}
