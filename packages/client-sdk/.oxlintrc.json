@@ -1,7 +1,10 @@
 {
   "$schema": "../../node_modules/oxlint/configuration_schema.json",
   "extends": ["../../.oxlintrc.json"],
-  "env": { "browser": true, "worker": true },
+  "env": {
+    "browser": true,
+    "worker": true
+  },
   "rules": {
     "no-restricted-imports": [
       "error",
@@ -28,5 +31,13 @@
         ]
       }
     ]
-  }
+  },
+  "overrides": [
+    {
+      "files": ["src/testing/**"],
+      "rules": {
+        "typescript/no-unsafe-type-assertion": "off"
+      }
+    }
+  ]
 }

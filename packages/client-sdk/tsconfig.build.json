@@ -11,5 +11,5 @@
   },
   "include": ["src"],
   "exclude": ["src/**/*.spec.ts"],
-  "references": []
+  "references": [{ "path": "../protocol/tsconfig.build.json" }]
 }

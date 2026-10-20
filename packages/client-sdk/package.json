@@ -11,6 +11,11 @@
       "@atlas/source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./testing": {
+      "@atlas/source": "./src/testing/index.ts",
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
     }
   },
   "scripts": {
@@ -21,9 +26,13 @@
   },
   "devDependencies": {
     "typescript": "~6.0.2",
-    "vitest": "^4.1.2"
+    "vitest": "^4.1.2",
+    "@types/node": "^24.0.0"
   },
   "files": [
     "dist"
-  ]
+  ],
+  "dependencies": {
+    "@atlas/protocol": "0.0.1"
+  }
 }
