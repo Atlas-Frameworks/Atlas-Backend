@@ -1,6 +1,6 @@
 # 04 · View engine (`packages/view-engine`)
 
-Pure TypeScript: no network, no database, no timers except ones passed in as functions. Everything here is unit-tested in isolation, and the view-service (05) wires it to the real world. Public API: [contracts.md](../contracts.md) §6. Plan sections: "View worker internals", "Pagination and live updates", "The hashing rule".
+Pure TypeScript: no network, no database, no timers except ones passed in as functions. Everything here is unit-tested in isolation, and the view-service (05) wires it to the real world. Public API: [contracts.md](../../contracts.md) §6. Plan sections: "View worker internals", "Pagination and live updates", "The hashing rule".
 
 Use the POC domain from `infra/postgres/init/02-schema.sql` (countries, connections, airports, airplanes) for registry definitions and tests.
 

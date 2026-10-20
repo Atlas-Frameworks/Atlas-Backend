@@ -2,7 +2,7 @@
   "name": "@atlas/protocol",
   "version": "0.0.1",
   "private": true,
-  "description": "Protobuf schema and generated TypeScript types shared by client, view service and replicator. See docs/tasks/03-protocol.md.",
+  "description": "Protobuf schema and generated TypeScript types shared by client, view service and replicator. See docs/tasks/dvir/03-protocol.md.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

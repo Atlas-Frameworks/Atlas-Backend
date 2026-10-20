@@ -2,7 +2,7 @@
 
 In production the replicator polls third-party sources and is the **only** writer to Postgres. For the POC, `replicator-sim` plays that role: it generates realistic data and changes, and writes them exactly as the real replicator must, so the real replicator can later adopt the same write module.
 
-Plan section: "Write path: replicator to Redis Stream". Contract: [contracts.md](../contracts.md) §1.
+Plan section: "Write path: replicator to Redis Stream". Contract: [contracts.md](../../contracts.md) §1.
 
 ---
 

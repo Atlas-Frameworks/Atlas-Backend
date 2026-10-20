@@ -1,6 +1,6 @@
 # Local infrastructure
 
-Starter `docker-compose.yml` for the POC. It has **not** been started yet in CI. Tasks I-01 to I-03 bring each part up, verify it, and fix what's wrong. See [docs/tasks/02-infra.md](../docs/tasks/02-infra.md).
+Starter `docker-compose.yml` for the POC. It has **not** been started yet in CI. Tasks I-01 to I-03 bring each part up, verify it, and fix what's wrong. See [docs/tasks/dvir/02-infra.md](../docs/tasks/dvir/02-infra.md).
 
 | Service | Port (host) | Purpose | Task |
 | --- | --- | --- | --- |
