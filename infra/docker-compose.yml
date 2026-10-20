@@ -5,7 +5,7 @@ name: atlas-realtime
 x-redis-image: &redis-image redis:7.4
 
 services:
-  # ---------- Postgres 17: primary + streaming read replica (task I-01) ----------
+  # ---------- Postgres 17: primary + streaming read replica (task I-01, see infra/postgres/README.md) ----------
   postgres-primary:
     image: postgres:17
     environment:
@@ -20,10 +20,16 @@ services:
       - max_wal_senders=10
       - -c
       - max_replication_slots=10
+      # Cap on WAL kept for a lagging slot. Exceeding it invalidates Debezium's slot (an incident).
       - -c
       - max_slot_wal_keep_size=4GB
       - -c
       - hot_standby_feedback=on
+      # Logical walsenders (Debezium) never get ahead of the replica's physical slot, so a promoted
+      # replica always has the failover slot at or past Debezium's position. The slot is created
+      # by init/04-replica-slot.sql.
+      - -c
+      - synchronized_standby_slots=replica_1
       - -c
       - shared_preload_libraries=pg_stat_statements
     ports: ["5432:5432"]
@@ -31,15 +37,36 @@ services:
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
       - pg-primary:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d atlas"]
-      interval: 5s
-      retries: 20
+      # TCP, not the socket: during first-start init the image runs a socket-only temporary server.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d atlas"]
+      interval: 2s
+      retries: 60
 
   postgres-replica:
     image: postgres:17
     environment:
       PGPASSWORD: replicator
     entrypoint: ["/bin/bash", "/replica/entrypoint.sh"]
+    # Passed to `postgres` by the entrypoint. Keep wal_level=logical so slot synchronization works
+    # and the replica can serve Debezium if promoted.
+    command:
+      - -c
+      - wal_level=logical
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+      - -c
+      - max_slot_wal_keep_size=4GB
+      - -c
+      - hot_standby=on
+      - -c
+      - hot_standby_feedback=on
+      # Postgres 17 failover slots: keep a synchronized copy of every slot created with failover=true.
+      - -c
+      - sync_replication_slots=on
+      - -c
+      - shared_preload_libraries=pg_stat_statements
     ports: ["5433:5432"]
     volumes:
       - ./postgres/replica:/replica:ro
@@ -47,6 +74,10 @@ services:
     depends_on:
       postgres-primary:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d atlas"]
+      interval: 2s
+      retries: 60
 
   # ---------- Redis: primary + replica + 3 Sentinels + master-only proxy (task I-02) ----------
   # Each node copies its config to a writable path, because Sentinel rewrites node configs on failover.
