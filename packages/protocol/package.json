@@ -11,19 +11,39 @@
       "@atlas/source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./cluster": {
+      "@atlas/source": "./src/cluster.ts",
+      "types": "./dist/cluster.d.ts",
+      "default": "./dist/cluster.js"
     }
   },
   "scripts": {
+    "generate": "buf generate",
+    "prebuild": "npm run generate",
     "build": "tsc -b tsconfig.build.json",
+    "pretypecheck": "npm run generate",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "oxlint --type-aware --deny-warnings src",
-    "test": "vitest run --passWithNoTests"
-  },
-  "devDependencies": {
-    "typescript": "~6.0.2",
-    "vitest": "^4.1.2"
+    "prelint": "npm run generate",
+    "lint": "buf lint && oxlint --type-aware --deny-warnings src",
+    "breaking": "buf breaking --against \"../../.git#branch=main,subdir=packages/protocol\"",
+    "pretest": "npm run generate",
+    "test": "vitest run"
   },
   "files": [
     "dist"
-  ]
+  ],
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.16.0"
+  },
+  "devDependencies": {
+    "@bufbuild/buf": "^1.74.0",
+    "@bufbuild/protoc-gen-es": "^2.16.0",
+    "@connectrpc/connect": "^2.2.0",
+    "@connectrpc/connect-node": "^2.2.0",
+    "@types/node": "^24.0.0",
+    "esbuild": "0.28.2",
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.2"
+  }
 }

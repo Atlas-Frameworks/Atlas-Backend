@@ -1,0 +1,11 @@
+version: v2
+# Uses only the local plugin from node_modules/.bin (npm puts it on PATH for npm scripts),
+# so generation needs no network and no globally installed tools.
+clean: true
+plugins:
+  - local: protoc-gen-es
+    out: src/gen
+    include_imports: false
+    opt:
+      - target=ts
+      - import_extension=js

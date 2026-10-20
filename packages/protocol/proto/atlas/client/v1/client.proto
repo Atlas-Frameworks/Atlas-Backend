@@ -1,0 +1,267 @@
+// Browser SDK <-> view-service worker protocol (contracts.md §3).
+//
+// Transport: one WebSocket per service; one binary frame = one ClientMessage
+// (client -> server) or one ServerMessage (server -> client).
+//
+// Schema rules (see packages/protocol/README.md):
+// - never renumber or reuse a field number; `reserved` removed numbers and names;
+// - only additive changes inside v1; a breaking change is a new package atlas.client.v2;
+// - counters on hot paths (seq, epoch) are uint32 so TypeScript sees `number`
+//   (protobuf-es maps 64-bit integers to bigint); widening uint32 -> uint64 later
+//   is wire-compatible.
+syntax = "proto3";
+
+package atlas.client.v1;
+
+import "google/protobuf/struct.proto";
+
+// ---------------------------------------------------------------------------
+// Wrappers
+// ---------------------------------------------------------------------------
+
+// Every client -> server frame.
+message ClientMessage {
+  oneof body {
+    Auth auth = 1;
+    OpenView open_view = 2;
+    CloseView close_view = 3;
+    SetLayout set_layout = 4;
+    SubscribeMap subscribe_map = 5;
+    UnsubscribeMap unsubscribe_map = 6;
+    SetWindow set_window = 7;
+    OpenDetail open_detail = 8;
+    CloseDetail close_detail = 9;
+    Locate locate = 10;
+    Resync resync = 11;
+  }
+}
+
+// Every server -> client frame.
+//
+// `sub_id` and `seq` live on the wrapper so every frame carries them:
+// - subscription frames (snapshot, map_delta, page_window, detail_update) have a
+//   non-empty `sub_id` and the subscription's `seq`. The client applies a frame
+//   only if `seq == last + 1`; otherwise it sends Resync. A snapshot resets the
+//   baseline to its own `seq`.
+// - connection-level frames (locate_result, reconnect, and error without a
+//   subscription) have `sub_id = ""` and `seq = 0` and are never sequence-checked.
+//
+// `sub_id` is chosen by the server and is the same for every client of one
+// shared subscription (one view's map, one page of one group, one detail), so
+// a delta is encoded once and published to all of them, and forwarded between
+// workers as bytes (cluster.v1.OwnerEvent.payload).
+message ServerMessage {
+  string sub_id = 1;
+  uint32 seq = 2;
+
+  oneof body {
+    Snapshot snapshot = 10;
+    MapDelta map_delta = 11;
+    PageWindow page_window = 12;
+    DetailUpdate detail_update = 13;
+    LocateResult locate_result = 14;
+    Reconnect reconnect = 15;
+    Error error = 16;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared types
+// ---------------------------------------------------------------------------
+
+enum SubscriptionKind {
+  SUBSCRIPTION_KIND_UNSPECIFIED = 0;
+  SUBSCRIPTION_KIND_MAP = 1;
+  SUBSCRIPTION_KIND_PAGE = 2;
+  SUBSCRIPTION_KIND_DETAIL = 3;
+}
+
+// Scope of a view: a set of countries (ids) or one connection.
+message CountryScope {
+  repeated string country_ids = 1;
+}
+
+enum SortDirection {
+  SORT_DIRECTION_UNSPECIFIED = 0; // treated as ASC
+  SORT_DIRECTION_ASC = 1;
+  SORT_DIRECTION_DESC = 2;
+}
+
+message Sort {
+  string field = 1; // a sortable field from the field registry
+  SortDirection dir = 2;
+}
+
+// One entity's display fields, as chosen by the field registry at runtime.
+// `fields` is a google.protobuf.Struct (protobuf-es exposes it as a plain
+// JsonObject). Value conventions: numbers are float64; int64 values and
+// uuids are strings; timestamps are ISO-8601 strings; SQL NULL is null.
+message Row {
+  string id = 1;
+  uint64 version = 2; // root entity version (Postgres bigint; bigint in TypeScript)
+  google.protobuf.Struct fields = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Client -> server
+// ---------------------------------------------------------------------------
+
+// First frame on a connection, and again with a refreshed token before expiry.
+message Auth {
+  string token = 1;
+  uint32 protocol_version = 2; // PROTOCOL_VERSION from @atlas/protocol
+}
+
+message OpenView {
+  string view_ref = 1; // client-chosen id, unique within the connection
+  string entity_type = 2; // e.g. "airplanes"
+  // The filter tree of contracts §5 as JSON text. An empty string means "no
+  // filter". The server checks the byte length before parsing.
+  string filter = 3;
+  oneof scope {
+    CountryScope countries = 4;
+    string connection_id = 5;
+  }
+}
+
+message CloseView {
+  string view_ref = 1;
+}
+
+message SetLayout {
+  string view_ref = 1;
+  repeated string group_by = 2; // groupable fields, outermost first
+  Sort sort = 3;
+}
+
+message SubscribeMap {
+  string view_ref = 1;
+}
+
+message UnsubscribeMap {
+  string view_ref = 1;
+}
+
+// Opens or moves one live page window of a view.
+message SetWindow {
+  string view_ref = 1;
+  repeated string group_path = 2; // group values from the outermost group; empty = whole list
+  uint32 page = 3; // 0-based
+  uint32 page_size = 4; // 0 closes the window
+  // Client-chosen id of this window within the view (for example "main" or
+  // "prefetch"). SetWindow with an existing window_ref moves that window.
+  string window_ref = 5;
+}
+
+message OpenDetail {
+  string entity_type = 1;
+  string id = 2;
+}
+
+message CloseDetail {
+  string entity_type = 1;
+  string id = 2;
+}
+
+// Asks which page an entity is on now. Answered by LocateResult.
+message Locate {
+  string view_ref = 1;
+  string id = 2;
+  uint32 page_size = 3; // 0 = the page size of the client's open window on this view
+}
+
+// Asks for a fresh snapshot after a sequence gap.
+message Resync {
+  string sub_id = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Server -> client
+// ---------------------------------------------------------------------------
+
+// Full state of one subscription. Resets the seq baseline.
+message Snapshot {
+  SubscriptionKind kind = 1;
+  // Binding back to the client's request. A worker fills these per socket;
+  // owner-produced snapshot payloads leave them empty, and the forwarding
+  // worker appends them with bindSnapshot() (protobuf merge, no re-encode).
+  string view_ref = 2; // MAP and PAGE
+  string window_ref = 3; // PAGE
+  oneof state {
+    MapDelta map = 10; // all entities as upserts; remove_ids is empty
+    PageWindow page = 11;
+    DetailUpdate detail = 12;
+  }
+}
+
+// Map changes since the previous seq, or the full map in a Snapshot.
+message MapDelta {
+  repeated string upsert_ids = 1;
+  // Little-endian float64 lon, lat, alt per upserted entity:
+  // byte length == 24 * upsert_ids.length. Use unpackPositions().
+  bytes positions = 2;
+  // Little-endian uint16 icon index per upserted entity:
+  // byte length == 2 * upsert_ids.length. Use unpackIcons().
+  bytes icons = 3;
+  repeated string remove_ids = 4;
+  // Either empty (no label changed) or parallel to upsert_ids: the label of
+  // each upserted entity ("" = no label).
+  repeated string labels = 5;
+}
+
+message GroupCount {
+  repeated string group_path = 1;
+  uint32 count = 2;
+}
+
+// One live page. The client rebuilds the page from ordered_ids plus its row
+// cache; `rows` holds only rows that are new to the client or changed.
+message PageWindow {
+  repeated string ordered_ids = 1; // the whole page, in order
+  repeated Row rows = 2;
+  uint32 total = 3; // rows in this group (or list)
+  uint32 page_count = 4;
+  repeated GroupCount group_counts = 5;
+  repeated string group_path = 6;
+  // The page actually served (0-based). Can be lower than requested when the
+  // list shrank below the requested page.
+  uint32 page = 7;
+  uint32 page_size = 8;
+}
+
+message DetailUpdate {
+  string entity_type = 1;
+  string id = 2;
+  oneof state {
+    Row row = 3;
+    bool removed = 4; // always true when set
+  }
+}
+
+message LocateResult {
+  string view_ref = 1;
+  string id = 2;
+  bool found = 3; // false: the entity is not in the view
+  repeated string group_path = 4;
+  uint32 page = 5; // 0-based
+}
+
+// Sent before a planned shutdown: reconnect after this delay.
+message Reconnect {
+  uint32 after_ms = 1; // random 0..15000
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_INVALID_FILTER = 1;
+  ERROR_CODE_LIMIT = 2;
+  ERROR_CODE_AUTH = 3;
+  ERROR_CODE_RETRY = 4;
+}
+
+// The optional subscription is ServerMessage.sub_id ("" = connection-level).
+message Error {
+  ErrorCode code = 1;
+  string message = 2;
+  string view_ref = 3; // set when the error answers a request about a view (e.g. OpenView)
+}

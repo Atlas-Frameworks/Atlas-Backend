@@ -2,7 +2,9 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
-    "types": []
+    // Node types for the specs only (the gRPC test runs a real HTTP/2 server). The build config
+    // (tsconfig.build.json) keeps "types": [], so non-spec sources cannot use Node globals.
+    "types": ["node"]
   },
   "include": ["src"]
 }

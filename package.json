@@ -12,9 +12,13 @@
     "apps/*"
   ],
   "scripts": {
+    "prebuild": "npm run generate -w @atlas/protocol",
     "build": "npm run build --workspaces --if-present",
+    "pretest": "npm run generate -w @atlas/protocol",
     "test": "npm run test --workspaces --if-present",
+    "prelint": "npm run generate -w @atlas/protocol",
     "lint": "npm run lint --workspaces --if-present && npm run format:check",
+    "pretypecheck": "npm run generate -w @atlas/protocol",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -34,7 +38,8 @@
     "@parcel/watcher@2.6.0": true,
     "lmdb@3.5.6": true,
     "msgpackr-extract@3.0.4": true,
-    "fsevents": false
+    "fsevents": false,
+    "@bufbuild/buf": false
   },
   "devDependencies": {
     "concurrently": "^10.0.6",
