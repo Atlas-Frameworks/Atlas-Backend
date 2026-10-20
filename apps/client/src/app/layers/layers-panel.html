@@ -1,0 +1,121 @@
+@if (registryError(); as err) {
+  <p class="error">Field registry unavailable: {{ err }}</p>
+  <button type="button" class="btn" (click)="loadRegistry()">Retry</button>
+} @else if (registry().length === 0) {
+  <p class="muted">Loading field registry…</p>
+} @else {
+  <div class="row">
+    <label for="layer-type">Layer</label>
+    <select id="layer-type" [value]="entityType()" (change)="setType(event($event))">
+      @for (t of registry(); track t.type) {
+        <option [value]="t.type">{{ t.label }}</option>
+      }
+    </select>
+  </div>
+
+  <details open>
+    <summary>
+      Filter
+      <span class="muted">{{ conditionCount() }} / {{ limits.conditions }}</span>
+    </summary>
+    <app-filter-group
+      [group]="filter()"
+      [fields]="fields()"
+      [issues]="issues()"
+      (groupChange)="filter.set($event)"
+    />
+  </details>
+
+  <details>
+    <summary>Group &amp; sort</summary>
+    <div class="grid">
+      @for (level of [0, 1]; track level) {
+        <label [for]="'group-' + level">{{ level === 0 ? 'Group by' : 'then by' }}</label>
+        <select
+          [id]="'group-' + level"
+          [value]="groupBy()[level] ?? ''"
+          [disabled]="level > groupBy().length"
+          (change)="setGroupBy(level, event($event))"
+        >
+          <option value="">—</option>
+          @for (f of groupable(); track f.name) {
+            @if (level === 0 || f.name !== groupBy()[0]) {
+              <option [value]="f.name">{{ f.label }}</option>
+            }
+          }
+        </select>
+      }
+      <label for="sort-field">Sort</label>
+      <span class="sort">
+        <select id="sort-field" [value]="sortDraft().field" (change)="setSortField(event($event))">
+          @for (f of sortable(); track f.name) {
+            <option [value]="f.name">{{ f.label }}</option>
+          }
+        </select>
+        <button
+          type="button"
+          class="btn icon"
+          [attr.aria-label]="sortDraft().dir === 'asc' ? 'Ascending' : 'Descending'"
+          (click)="toggleSortDir()"
+        >
+          {{ sortDraft().dir === 'asc' ? '↑' : '↓' }}
+        </button>
+      </span>
+    </div>
+  </details>
+
+  <details>
+    <summary>Saved views</summary>
+    <form class="row" (submit)="$event.preventDefault(); saveView()">
+      <input
+        aria-label="View name"
+        placeholder="Name"
+        [value]="saveName()"
+        (input)="saveName.set(event($event))"
+      />
+      <button type="submit" class="btn" [disabled]="saveName().trim() === ''">Save</button>
+    </form>
+    @for (v of saved(); track v.name) {
+      <div class="row saved">
+        <button type="button" class="link" (click)="loadView(v.name)">{{ v.name }}</button>
+        <button
+          type="button"
+          class="link"
+          [attr.aria-label]="'Delete ' + v.name"
+          (click)="deleteView(v.name)"
+        >
+          ×
+        </button>
+      </div>
+    } @empty {
+      <p class="muted">None yet: filter, group and sort are saved for this user.</p>
+    }
+  </details>
+
+  <div class="row actions">
+    <button type="button" class="btn primary" [disabled]="!canApply()" (click)="apply()">
+      Apply
+    </button>
+    <button type="button" class="link" (click)="resetFilter()">Clear filter</button>
+  </div>
+  @if (viewError(); as err) {
+    <p class="error" role="alert">{{ err.code }}: {{ err.message }}</p>
+  }
+  @if (findMessage(); as m) {
+    <p class="muted">{{ m }}</p>
+  }
+
+  @if (view(); as v) {
+    @if (levels() === 0) {
+      <app-live-page-list class="live" [view]="v" [columns]="columns()" [focus]="focus()" />
+    } @else {
+      <app-group-tree
+        [view]="v"
+        [levels]="levels()"
+        [columns]="columns()"
+        [focus]="focus()"
+        [layoutKey]="layoutKey()"
+      />
+    }
+  }
+}

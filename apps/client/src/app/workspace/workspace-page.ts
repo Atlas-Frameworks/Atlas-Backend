@@ -35,11 +35,6 @@ export class WorkspacePage {
   protected readonly layersOpen = signal(true);
   protected readonly drawerOpen = this.store.drawerOpen;
 
-  constructor() {
-    // Default view until the layers panel (A-04) manages views itself.
-    this.store.views.set([this.realtime.openView({ entityType: 'airplanes' })]);
-  }
-
   protected async signOut(): Promise<void> {
     this.auth.signOut();
     await this.router.navigate(['/login']);
