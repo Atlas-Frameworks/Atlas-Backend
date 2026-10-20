@@ -1,0 +1,39 @@
+{
+  "name": "@atlas/map-deckgl",
+  "version": "0.0.1",
+  "private": true,
+  "description": "deck.gl map adapter (MapAdapter, contracts §7) mounted on MapLibre or Mapbox via MapboxOverlay. Binary attributes from the SDK's typed arrays, no GeoJSON. See docs/tasks/boaz/06-client-sdk.md (C-06).",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "@atlas/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "oxlint --type-aware --deny-warnings src bench",
+    "test": "vitest run",
+    "bench": "node bench/build.mjs && node bench/serve.mjs"
+  },
+  "dependencies": {
+    "@atlas/client-sdk": "*",
+    "@deck.gl/core": "~9.4.0",
+    "@deck.gl/layers": "~9.4.0",
+    "@deck.gl/mapbox": "~9.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "0.28.2",
+    "maplibre-gl": "^6.15.0",
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.2"
+  },
+  "files": [
+    "dist"
+  ]
+}
