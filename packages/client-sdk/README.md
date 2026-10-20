@@ -78,3 +78,69 @@ Benchmark (`npm run bench -w @atlas/client-sdk`, Node 24, Apple Silicon laptop):
 - `DetailSubscription`: the live row, or `removed: true`.
 - `locate(id, {jump})` returns `{found, groupPath, page}` from `LocateResult`; with `jump` the page
   moves there.
+
+## Public API (C-04)
+
+```ts
+import { createAtlasClient } from '@atlas/client-sdk';
+
+function createAtlasClient(config: AtlasClientConfig): AtlasClient;
+
+interface AtlasClientConfig {
+  services: Record<string, string>;       // entity type -> ws URL ('*' = any)
+  token?: string;
+  maxFps?: number;                        // map frames per second per layer (10)
+  maxLabels?: number;                     // labels per frame (500)
+  updatesPerSecond?: number;              // page/detail/status batches per second (4)
+  backoff?: { baseMs?: number; maxMs?: number };
+  worker?: Worker | (() => Worker) | 'main-thread';   // omitted = main thread (tests only)
+  inject?: { transport?; clock?; random? };           // main-thread mode only
+  trackVisibility?: boolean;              // document.visibilitychange -> pause (true)
+}
+
+interface Observable<T> { subscribe(listener: (value: T) => void): () => void; getSnapshot(): T }
+
+interface AtlasClient {
+  readonly status: Observable<AtlasStatus>;
+  setToken(token: string): void;
+  openView(spec: ViewSpec): ViewHandle;
+  openDetail(entityType: string, id: string): DetailHandle;
+  onFrame(listener: (frame: MapFrame) => void): () => void;   // buffers return when it returns
+  attachMap(adapter: MapAdapter): () => void;
+  setCamera(camera: { lon: number; lat: number; height?: number } | null): void;
+  setSelected(id: string | null): void;
+  setHidden(hidden: boolean): void;
+  destroy(): void;
+}
+
+interface ViewHandle {
+  readonly id: string;                                // also the protocol viewRef
+  readonly spec: ViewSpec;                            // { entityType, filter?, scope }
+  readonly error: Observable<ErrorInfo | null>;       // e.g. INVALID_FILTER
+  setLayout(layout: { groupBy: string[]; sort?: { field: string; dir: 'asc' | 'desc' } }): void;
+  subscribeMap(layerId?: string): { layerId: string; close(): void };
+  subscribePage(options?: { groupPath?: string[]; page?: number; pageSize?: number; prefetch?: boolean }): PageHandle;
+  locate(id: string, pageSize?: number): Promise<{ found: boolean; groupPath: string[]; page: number }>;
+  close(): void;
+}
+
+interface PageHandle extends Observable<PageState | null> {
+  setPage(page: number): void;
+  setGroupPath(groupPath: string[]): void;
+  setFreezeOrder(frozen: boolean): void;
+  locate(id: string, options?: { jump?: boolean }): Promise<LocateAnswer>;
+  close(): void;
+}
+
+interface DetailHandle extends Observable<DetailState | null> { close(): void }
+```
+
+- Worker entry: `@atlas/client-sdk/worker`. In an app: a one-line `sdk.worker.ts`
+  (`import '@atlas/client-sdk/worker';`) and `worker: () => new Worker(new URL('./sdk.worker',
+  import.meta.url), { type: 'module' })`.
+- Control calls are fire-and-forget messages with handles chosen on the main side (no round trip);
+  only `locate` answers. Map frames are posted with their 5 buffers transferred and sent back after
+  the listeners return. Page, detail and status updates are coalesced (latest per key) and sent at
+  most 4 times per second; while the tab is hidden only status updates go out.
+- Example: `npm run dev:mock`, then `npm run example -w @atlas/client-sdk` and open
+  http://127.0.0.1:5180/plain.html (`?mock=http://host:port` for another mock).

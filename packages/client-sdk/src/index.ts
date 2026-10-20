@@ -14,3 +14,4 @@ export * from './core/index.js';
 export * from './map-store/index.js';
 export * from './adapters/index.js';
 export * from './pages/index.js';
+export * from './bridge/index.js';

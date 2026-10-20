@@ -94,9 +94,15 @@ export class AtlasCore {
     return url;
   }
 
-  openView(spec: ViewSpec, onError?: (info: ErrorInfo) => void): CoreView {
+  /**
+   * Opens a view on the service for its entity type.
+   *
+   * @param viewRef the client-chosen id sent as `OpenView.viewRef` (default `v1`, `v2`, ...);
+   *   must be unique within this core.
+   */
+  openView(spec: ViewSpec, onError?: (info: ErrorInfo) => void, viewRef?: string): CoreView {
     const session = this.session(this.urlFor(spec.entityType));
-    const viewRef = `v${this.nextViewRef++}`;
+    viewRef ??= `v${this.nextViewRef++}`;
     session.openView(viewRef, spec, onError);
     return {
       viewRef,

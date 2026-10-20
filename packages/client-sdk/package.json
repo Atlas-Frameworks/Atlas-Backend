@@ -16,6 +16,11 @@
       "@atlas/source": "./src/testing/index.ts",
       "types": "./dist/testing/index.d.ts",
       "default": "./dist/testing/index.js"
+    },
+    "./worker": {
+      "@atlas/source": "./src/worker.ts",
+      "types": "./dist/worker.d.ts",
+      "default": "./dist/worker.js"
     }
   },
   "scripts": {
@@ -23,12 +28,14 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "oxlint --type-aware --deny-warnings src",
     "test": "vitest run --passWithNoTests",
-    "bench": "vitest run --config vitest.perf.config.ts"
+    "bench": "vitest run --config vitest.perf.config.ts",
+    "example": "node examples/build.mjs && node examples/serve.mjs"
   },
   "devDependencies": {
     "typescript": "~6.0.2",
     "vitest": "^4.1.2",
-    "@types/node": "^24.0.0"
+    "@types/node": "^24.0.0",
+    "esbuild": "0.28.2"
   },
   "files": [
     "dist"
