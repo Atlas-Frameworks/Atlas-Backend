@@ -1,0 +1,90 @@
+<main class="login">
+  <form class="card" (submit)="submit($event)">
+    <header>
+      <h1>Atlas</h1>
+      <p class="muted">Dev sign-in (POC). Choose what this session may see.</p>
+    </header>
+
+    <div class="tabs" role="radiogroup" aria-label="Scope type">
+      <label [class.active]="mode() === 'countries'">
+        <input
+          type="radio"
+          name="mode"
+          value="countries"
+          [checked]="mode() === 'countries'"
+          (change)="setMode('countries')"
+        />
+        Countries
+      </label>
+      <label [class.active]="mode() === 'connection'">
+        <input
+          type="radio"
+          name="mode"
+          value="connection"
+          [checked]="mode() === 'connection'"
+          (change)="setMode('connection')"
+        />
+        Connection
+      </label>
+    </div>
+
+    @if (scopes.isLoading()) {
+      <p class="muted">Loading scopes…</p>
+    } @else if (scopes.error(); as err) {
+      <p class="error" role="alert">Could not load scopes: {{ err.message }}</p>
+      <button type="button" class="btn" (click)="scopes.reload()">Retry</button>
+    } @else if (scopes.hasValue()) {
+      @if (mode() === 'countries') {
+        <div class="list-actions">
+          <span class="muted">{{ countryIds().size }} selected</span>
+          <button type="button" class="link" (click)="selectAllCountries(true)">All</button>
+          <button type="button" class="link" (click)="selectAllCountries(false)">None</button>
+        </div>
+        <ul class="options" aria-label="Countries">
+          @for (c of scopes.value().countries; track c.id) {
+            <li>
+              <label>
+                <input
+                  #box
+                  type="checkbox"
+                  [checked]="countryIds().has(c.id)"
+                  (change)="toggleCountry(c.id, box.checked)"
+                />
+                <span class="code">{{ c.code }}</span>
+                <span>{{ c.name }}</span>
+                <span class="muted region">{{ c.region }}</span>
+              </label>
+            </li>
+          }
+        </ul>
+      } @else {
+        <ul class="options" aria-label="Connections">
+          @for (c of scopes.value().connections; track c.id) {
+            <li>
+              <label>
+                <input
+                  type="radio"
+                  name="connection"
+                  [checked]="connectionId() === c.id"
+                  (change)="connectionId.set(c.id)"
+                />
+                <span>{{ c.name }}</span>
+                <span class="muted region">{{ c.countryIds.length }} countries</span>
+              </label>
+            </li>
+          } @empty {
+            <li class="muted">No connections.</li>
+          }
+        </ul>
+      }
+    }
+
+    @if (error(); as msg) {
+      <p class="error" role="alert">{{ msg }}</p>
+    }
+
+    <button type="submit" class="btn primary" [disabled]="!canSubmit()">
+      {{ submitting() ? 'Signing in…' : 'Sign in' }}
+    </button>
+  </form>
+</main>

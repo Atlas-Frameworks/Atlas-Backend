@@ -13,3 +13,13 @@ coverage/
 !.vscode/extensions.json
 infra/.data/
 packages/protocol/src/gen/
+*.tsbuildinfo
+
+# Claude Code agent worktrees
+.claude/worktrees/
+
+# Helm output from deploy/scripts/validate.sh
+deploy/.rendered/
+
+# Map library static files copied by apps/client/scripts/map-assets.mjs
+apps/client/.map-assets/

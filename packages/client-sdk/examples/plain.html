@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Atlas SDK, plain JS</title>
+    <style>
+      body {
+        font:
+          14px/1.4 system-ui,
+          sans-serif;
+        margin: 16px;
+        background: #10151c;
+        color: #dde3ea;
+      }
+      h1 {
+        font-size: 18px;
+      }
+      .stats {
+        display: flex;
+        gap: 24px;
+        margin: 12px 0;
+        flex-wrap: wrap;
+      }
+      .stats div {
+        background: #1a222c;
+        padding: 8px 12px;
+        border-radius: 6px;
+      }
+      .stats b {
+        display: block;
+        font-size: 20px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        max-width: 900px;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 4px 8px;
+        border-bottom: 1px solid #263240;
+      }
+      #status.live {
+        color: #6fdc8c;
+      }
+      #status.bad {
+        color: #ffb454;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Atlas SDK, plain JS (no framework)</h1>
+    <p>
+      Runs the SDK in a Web Worker against the mock server (<code>npm run dev:mock</code>). Mock
+      URL: <code id="mock"></code>
+    </p>
+    <div class="stats">
+      <div>Connection <b id="status">…</b></div>
+      <div>Map frames <b id="frames">0</b></div>
+      <div>Entities on map <b id="entities">0</b></div>
+      <div>Page updates <b id="pageUpdates">0</b></div>
+      <div>List total <b id="total">0</b></div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Callsign</th>
+          <th>Airline</th>
+          <th>Aircraft</th>
+          <th>Altitude</th>
+          <th>Version</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <script type="module" src="./dist/plain.js"></script>
+  </body>
+</html>

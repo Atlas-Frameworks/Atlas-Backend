@@ -12,6 +12,10 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "verbatimModuleSyntax": true
+    "verbatimModuleSyntax": true,
+    // Resolve @atlas/* workspace packages to their TypeScript sources (the "@atlas/source" export
+    // condition), so editors, typecheck and tests work without building first. Build configs
+    // (tsconfig.build.json) clear this and resolve to the packages' compiled dist/ instead.
+    "customConditions": ["@atlas/source"]
   }
 }

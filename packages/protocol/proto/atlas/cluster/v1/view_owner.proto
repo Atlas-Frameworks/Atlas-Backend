@@ -1,0 +1,111 @@
+// Worker <-> worker protocol (contracts.md §4). gRPC over HTTP/2; mutual TLS
+// in OpenShift, plaintext allowed locally.
+//
+// Same schema rules as atlas.client.v1 (see packages/protocol/README.md).
+syntax = "proto3";
+
+package atlas.cluster.v1;
+
+import "atlas/client/v1/client.proto";
+
+service ViewOwner {
+  // One bidirectional stream per subscriber-worker -> owner-worker pair.
+  // The subscriber sends Hello first, then Sub/Unsub; the owner answers with
+  // snapshots and deltas per sub_key, or NotOwner.
+  rpc Subscribe(stream OwnerRequest) returns (stream OwnerEvent);
+}
+
+// ---------------------------------------------------------------------------
+// Subscriber -> owner
+// ---------------------------------------------------------------------------
+
+message OwnerRequest {
+  oneof body {
+    Hello hello = 1;
+    Sub sub = 2;
+    Unsub unsub = 3;
+  }
+}
+
+message Hello {
+  string worker_name = 1; // stable StatefulSet pod name
+  uint32 epoch = 2; // membership epoch the subscriber acts on
+}
+
+// Everything the owner needs to build the view, so the owner never depends
+// on the subscriber's local state.
+message ViewSpec {
+  string entity_type = 1;
+  string filter = 2; // filter tree JSON (contracts §5), already validated by the subscriber
+  oneof scope {
+    atlas.client.v1.CountryScope countries = 3;
+    string connection_id = 4;
+  }
+  repeated string group_by = 5;
+  atlas.client.v1.Sort sort = 6;
+}
+
+message PageSpec {
+  repeated string group_path = 1;
+  uint32 page = 2; // 0-based
+  uint32 page_size = 3;
+}
+
+message DetailSpec {
+  string entity_type = 1;
+  string id = 2;
+}
+
+message Sub {
+  // Identifies this subscription on the stream. Equals the client-facing
+  // ServerMessage.sub_id of the payloads, so they forward unchanged.
+  string sub_key = 1;
+  string view_key = 2; // viewKey() from @atlas/view-engine; empty for DETAIL
+  atlas.client.v1.SubscriptionKind kind = 3;
+  PageSpec page_spec = 4; // PAGE only
+  ViewSpec view = 5; // MAP and PAGE
+  DetailSpec detail = 6; // DETAIL only
+  uint32 epoch = 7;
+}
+
+message Unsub {
+  string sub_key = 1;
+  uint32 epoch = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Owner -> subscriber
+// ---------------------------------------------------------------------------
+
+message OwnerEvent {
+  oneof body {
+    OwnerSnapshot snapshot = 1;
+    OwnerDelta delta = 2;
+    NotOwner not_owner = 3;
+  }
+}
+
+// `payload` is an encoded atlas.client.v1.ServerMessage whose body is a
+// Snapshot. `seq` repeats the payload's seq so the subscriber can order and
+// drop frames without decoding the payload.
+message OwnerSnapshot {
+  string sub_key = 1;
+  uint32 seq = 2;
+  uint32 epoch = 3;
+  bytes payload = 4;
+}
+
+// `payload` is an encoded atlas.client.v1.ServerMessage whose body is a
+// MapDelta, PageWindow or DetailUpdate.
+message OwnerDelta {
+  string sub_key = 1;
+  uint32 seq = 2;
+  uint32 epoch = 3;
+  bytes payload = 4;
+}
+
+// The receiver does not own the view at `epoch`; re-resolve the owner.
+message NotOwner {
+  string sub_key = 1;
+  uint32 epoch = 2;
+}

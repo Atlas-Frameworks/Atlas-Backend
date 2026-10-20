@@ -59,15 +59,15 @@ Size: S ≈ 1–2 days, M ≈ 3–5 days, L ≈ 1–2 weeks for one person.
 
 | ID | Title | Depends on | Size | Owner | Status |
 | --- | --- | --- | --- | --- | --- |
-| F-01 | Monorepo tooling, lint and CI | – | S | | todo |
-| F-02 | Developer workflow scripts and docs | F-01 | S | | todo |
-| F-03 | Shared config, logging and errors package | F-01 | S | | todo |
-| I-01 | Postgres primary + replica with failover slots | – | M | | todo |
-| I-02 | Redis + Sentinel + master-only proxy | – | M | | todo |
-| I-03 | Debezium Server outbox pipeline | I-01, I-02, W-01 | M | | todo |
-| I-04 | OpenShift deployment manifests | S-01, S-07 | M | | todo |
-| I-05 | Prometheus and Grafana dashboards | S-09 | S | | todo |
-| P-01 | Protobuf schemas and code generation | – | M | dvir | in progress |
+| F-01 | Monorepo tooling, lint and CI | – | S | dvir (Claude) | in review |
+| F-02 | Developer workflow scripts and docs | F-01 | S | dvir (Claude) | in review |
+| F-03 | Shared config, logging and errors package | F-01 | S | dvir (Claude) | in review |
+| I-01 | Postgres primary + replica with failover slots | – | M | dvir (Claude) | in review |
+| I-02 | Redis + Sentinel + master-only proxy | – | M | dvir (Claude) | in review |
+| I-03 | Debezium Server outbox pipeline | I-01, I-02, W-01 | M | dvir (Claude) | in review |
+| I-04 | OpenShift deployment manifests | S-01, S-07 | M | dvir (Claude) | in review |
+| I-05 | Prometheus and Grafana dashboards | S-09 | S | dvir (Claude) | in review |
+| P-01 | Protobuf schemas and code generation | – | M | dvir (Claude) | in review |
 | P-02 | Outbox event JSON schema and validator | – | S | dvir | in progress |
 | E-01 | Field registry and filter validation | – | M | snir | todo |
 | E-02 | Filter-to-SQL compiler | E-01 | L | snir | todo |
@@ -86,18 +86,18 @@ Size: S ≈ 1–2 days, M ≈ 3–5 days, L ≈ 1–2 weeks for one person.
 | S-08 | Stream trimmer | S-01 | S | dvir | todo |
 | S-09 | Metrics, logging and health | S-01 | S | dvir | todo |
 | S-10 | Multiple services from one engine | S-04 | S | dvir | todo |
-| C-01 | SDK core: transport, protocol, sequence, reconnect | P-01 | L | boaz | todo |
-| C-02 | Map data store and frame scheduling | C-01 | M | boaz | todo |
-| C-03 | Pages, detail and locate | C-01 | M | boaz | todo |
-| C-04 | Worker bridge and public API | C-01 | M | boaz | todo |
-| C-05 | MapAdapter interface and Cesium adapter | C-02 | L | boaz | todo |
-| C-06 | deck.gl / MapLibre adapter (stretch) | C-05 | M | boaz | todo |
-| C-07 | Mock protocol server and deterministic SDK tests | P-01 | M | boaz | todo |
-| A-01 | Angular app shell and login stub | F-01 | M | boaz | todo |
-| A-02 | Angular SDK service (signals) | C-04, A-01 | S | boaz | todo |
-| A-03 | Map component | C-05, A-02 | M | boaz | todo |
-| A-04 | Layers panel: filters, grouping, live pages | A-02, C-03 | L | boaz | todo |
-| A-05 | Detail drawer | A-02, C-03 | S | boaz | todo |
+| C-01 | SDK core: transport, protocol, sequence, reconnect | P-01 | L | boaz (Claude) | in review |
+| C-02 | Map data store and frame scheduling | C-01 | M | boaz (Claude) | in review |
+| C-03 | Pages, detail and locate | C-01 | M | boaz (Claude) | in review |
+| C-04 | Worker bridge and public API | C-01 | M | boaz (Claude) | in review |
+| C-05 | MapAdapter interface and Cesium adapter | C-02 | L | boaz (Claude) | in review |
+| C-06 | deck.gl / MapLibre adapter (stretch) | C-05 | M | boaz (Claude) | in review |
+| C-07 | Mock protocol server and deterministic SDK tests | P-01 | M | boaz (Claude) | in review |
+| A-01 | Angular app shell and login stub | F-01 | M | boaz (Claude) | in review |
+| A-02 | Angular SDK service (signals) | C-04, A-01 | S | boaz (Claude) | in review |
+| A-03 | Map component | C-05, A-02 | M | boaz (Claude) | in review |
+| A-04 | Layers panel: filters, grouping, live pages | A-02, C-03 | L | boaz (Claude) | in review |
+| A-05 | Detail drawer | A-02, C-03 | S | boaz (Claude) | in review |
 | W-01 | Final schema, roles and write function | I-01, P-02 | M | snir | todo |
 | W-02 | Replicator write path (NestJS) | W-01 | M | snir | todo |
 | W-03 | Data simulator and load profiles | W-02 | M | snir | todo |

@@ -1,0 +1,106 @@
+:host {
+  display: grid;
+  grid-template-rows: var(--atlas-top-bar-height) 1fr;
+  height: 100%;
+}
+
+.top-bar {
+  z-index: 2;
+  display: flex;
+  gap: var(--atlas-space-3);
+  align-items: center;
+  padding: 0 var(--atlas-space-3);
+  background: var(--atlas-surface);
+  border-bottom: 1px solid var(--atlas-border);
+
+  .brand {
+    font-weight: 600;
+    color: var(--atlas-text-strong);
+  }
+
+  .spacer {
+    flex: 1;
+  }
+}
+
+.stage {
+  position: relative;
+  overflow: hidden;
+}
+
+.map {
+  position: absolute;
+  inset: 0;
+  background: var(--atlas-map-bg);
+}
+
+.map-placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--atlas-space-1);
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: var(--atlas-font-lg);
+  color: var(--atlas-text-muted);
+  background-image:
+    linear-gradient(var(--atlas-map-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--atlas-map-grid) 1px, transparent 1px);
+  background-size: 4rem 4rem;
+}
+
+.panel {
+  position: absolute;
+  top: var(--atlas-space-3);
+  bottom: var(--atlas-space-3);
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: var(--atlas-panel-width);
+  background: var(--atlas-surface-overlay);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius-lg);
+  box-shadow: var(--atlas-shadow);
+  transition:
+    transform var(--atlas-motion),
+    visibility var(--atlas-motion);
+}
+
+.layers {
+  left: var(--atlas-space-3);
+
+  &.collapsed {
+    visibility: hidden;
+    transform: translateX(calc(-100% - 2 * var(--atlas-space-3)));
+  }
+}
+
+.drawer {
+  right: var(--atlas-space-3);
+  width: var(--atlas-drawer-width);
+
+  &.collapsed {
+    visibility: hidden;
+    transform: translateX(calc(100% + 2 * var(--atlas-space-3)));
+  }
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--atlas-space-2) var(--atlas-space-3);
+  border-bottom: 1px solid var(--atlas-border);
+
+  h2 {
+    margin: 0;
+    font-size: var(--atlas-font-md);
+  }
+}
+
+.panel-body {
+  flex: 1;
+  padding: var(--atlas-space-3);
+  overflow: auto;
+}

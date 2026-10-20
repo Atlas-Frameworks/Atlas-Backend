@@ -5,7 +5,7 @@ name: atlas-realtime
 x-redis-image: &redis-image redis:7.4
 
 services:
-  # ---------- Postgres 17: primary + streaming read replica (task I-01) ----------
+  # ---------- Postgres 17: primary + streaming read replica (task I-01, see infra/postgres/README.md) ----------
   postgres-primary:
     image: postgres:17
     environment:
@@ -20,10 +20,16 @@ services:
       - max_wal_senders=10
       - -c
       - max_replication_slots=10
+      # Cap on WAL kept for a lagging slot. Exceeding it invalidates Debezium's slot (an incident).
       - -c
       - max_slot_wal_keep_size=4GB
       - -c
       - hot_standby_feedback=on
+      # Logical walsenders (Debezium) never get ahead of the replica's physical slot, so a promoted
+      # replica always has the failover slot at or past Debezium's position. The slot is created
+      # by init/04-replica-slot.sql.
+      - -c
+      - synchronized_standby_slots=replica_1
       - -c
       - shared_preload_libraries=pg_stat_statements
     ports: ["5432:5432"]
@@ -31,15 +37,36 @@ services:
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
       - pg-primary:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d atlas"]
-      interval: 5s
-      retries: 20
+      # TCP, not the socket: during first-start init the image runs a socket-only temporary server.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d atlas"]
+      interval: 2s
+      retries: 60
 
   postgres-replica:
     image: postgres:17
     environment:
       PGPASSWORD: replicator
     entrypoint: ["/bin/bash", "/replica/entrypoint.sh"]
+    # Passed to `postgres` by the entrypoint. Keep wal_level=logical so slot synchronization works
+    # and the replica can serve Debezium if promoted.
+    command:
+      - -c
+      - wal_level=logical
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+      - -c
+      - max_slot_wal_keep_size=4GB
+      - -c
+      - hot_standby=on
+      - -c
+      - hot_standby_feedback=on
+      # Postgres 17 failover slots: keep a synchronized copy of every slot created with failover=true.
+      - -c
+      - sync_replication_slots=on
+      - -c
+      - shared_preload_libraries=pg_stat_statements
     ports: ["5433:5432"]
     volumes:
       - ./postgres/replica:/replica:ro
@@ -47,53 +74,190 @@ services:
     depends_on:
       postgres-primary:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d atlas"]
+      interval: 2s
+      retries: 60
 
-  # ---------- Redis: primary + replica + 3 Sentinels + master-only proxy (task I-02) ----------
-  # Each node copies its config to a writable path, because Sentinel rewrites node configs on failover.
+  # ---------- Redis: primary + replica + 3 Sentinels + master-only proxy (task I-02, see infra/redis/README.md) ----------
+  # Configs are copied into each container's /data on FIRST start only. Sentinel rewrites them on
+  # failover (replicaof, known replicas), and a restart must keep that, or a restarted old master
+  # would come back as a second master. After editing redis/*.conf, run `npm run infra:down`.
+  # The nodes are not published on the host: after a failover "redis-primary" may be a replica.
+  # Apps use the proxy (localhost:6380); for direct access use `docker compose exec redis-primary redis-cli`.
   redis-primary:
     image: *redis-image
-    entrypoint: ["/bin/sh", "-c", "cp /config/redis.conf /data/redis.conf && exec redis-server /data/redis.conf"]
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        [ -f /data/redis.conf ] || cp /config/redis.conf /data/redis.conf;
+        exec redis-server /data/redis.conf --replica-announce-ip redis-primary
     volumes:
       - ./redis/redis.conf:/config/redis.conf:ro
-    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 30
 
   redis-replica:
     image: *redis-image
-    entrypoint: ["/bin/sh", "-c", "cp /config/redis.conf /data/redis.conf && exec redis-server /data/redis.conf --replicaof redis-primary 6379"]
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        [ -f /data/redis.conf ] || { cp /config/redis.conf /data/redis.conf && echo "replicaof redis-primary 6379" >> /data/redis.conf; };
+        exec redis-server /data/redis.conf --replica-announce-ip redis-replica
     volumes:
       - ./redis/redis.conf:/config/redis.conf:ro
-    depends_on: [redis-primary]
+    depends_on:
+      redis-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 30
 
   sentinel-1: &sentinel
     image: *redis-image
-    entrypoint: ["/bin/sh", "-c", "cp /config/sentinel.conf /tmp/sentinel.conf && exec redis-sentinel /tmp/sentinel.conf"]
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        [ -f /data/sentinel.conf ] || cp /config/sentinel.conf /data/sentinel.conf;
+        exec redis-sentinel /data/sentinel.conf --sentinel announce-ip "$$(hostname)"
+    hostname: sentinel-1
     volumes:
       - ./redis/sentinel.conf:/config/sentinel.conf:ro
-    depends_on: [redis-primary, redis-replica]
-  sentinel-2: *sentinel
-  sentinel-3: *sentinel
+      - ./redis/sentinel-reconfig.sh:/config/sentinel-reconfig.sh:ro
+    depends_on:
+      redis-primary:
+        condition: service_healthy
+      redis-replica:
+        condition: service_healthy
+  sentinel-2:
+    <<: *sentinel
+    hostname: sentinel-2
+  sentinel-3:
+    <<: *sentinel
+    hostname: sentinel-3
 
-  # Debezium's Redis sink has no Sentinel support, so it connects through this proxy,
-  # which only ever routes to the node that currently reports role:master.
+  # Debezium's Redis sink has no Sentinel support, so it connects through this proxy, which only
+  # routes to the node that currently reports role:master and cuts sessions to a demoted node.
   redis-proxy:
     image: haproxy:3.2
     volumes:
       - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     ports: ["6380:6380", "8404:8404"]
-    depends_on: [redis-primary, redis-replica]
+    depends_on:
+      redis-primary:
+        condition: service_healthy
+      redis-replica:
+        condition: service_healthy
 
-  # ---------- Debezium Server: outbox -> Redis Streams (task I-03) ----------
+  # ---------- Debezium Server: outbox -> Redis Streams (task I-03, see infra/debezium/README.md) ----------
+  # One instance only: a replication slot serves one reader. Read position lives in Postgres
+  # (debezium_offsets), so the container keeps no state.
   debezium:
-    image: quay.io/debezium/server:3.7.0.Final
+    # The official image plus the Outbox Event Router jar on the classpath (see debezium/Dockerfile).
+    build: ./debezium
+    image: atlas-realtime/debezium-server:3.7.0.Final
+    restart: unless-stopped
+    stop_grace_period: 60s
     volumes:
       - ./debezium/application.properties:/debezium/config/application.properties:ro
     depends_on:
       postgres-primary:
         condition: service_healthy
+      # synchronized_standby_slots makes Debezium wait for the replica, so start after it.
+      postgres-replica:
+        condition: service_healthy
       redis-proxy:
         condition: service_started
-    ports: ["8080:8080"]
+    environment:
+      # The image's run.sh loads the Prometheus JMX exporter agent when this is set (task I-05).
+      # Debezium Server 3.7 has no Quarkus /q/metrics endpoint. Rules: /debezium/config/metrics.yml.
+      JMX_EXPORTER_PORT: "9404"
+    ports: ["8080:8080", "9404:9404"]
+    # Watchdog. When the Redis master is demoted mid-write, the Redis sink fails its engine
+    # (JedisDataException "UNBLOCKED ... master -> replica") but the JVM keeps running, so
+    # `restart:` never fires. This check does what an OpenShift liveness probe on /q/health/live
+    # does: if liveness is DOWN after this JVM was UP once, or never came UP within 120 s, it sends
+    # SIGTERM to the JVM; Debezium then restarts and resumes from its offset in Postgres.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          started=$$(stat -c %Y /proc/1);
+          if curl -sf -m 3 localhost:8080/q/health/live > /dev/null; then touch /tmp/was-live-$$started; exit 0; fi;
+          if [ -f /tmp/was-live-$$started ] || [ $$(( $$(date +%s) - started )) -gt 120 ]; then kill 1; fi;
+          exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 3
+
+  # ---------- Monitoring: Prometheus, Grafana and exporters (task I-05, see monitoring/README.md) ----------
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.94.0
+    environment:
+      # Multi-target: Prometheus passes each node as ?target=, so no default address.
+      REDIS_ADDR: ""
+      REDIS_EXPORTER_CHECK_STREAMS: "changes:*"
+      # Membership entries (<svc>:workers:<name>, contracts §2), for the worker-list alert.
+      REDIS_EXPORTER_COUNT_KEYS: "db0=*:workers:view-service-*"
+    depends_on: [redis-primary, redis-replica]
+
+  postgres-exporter-primary: &postgres-exporter
+    image: prometheuscommunity/postgres-exporter:v0.20.1
+    command: ["--extend.query-path=/config/queries.yml"]
+    environment:
+      # Local dev only: the superuser. A real deployment uses a role with pg_monitor.
+      DATA_SOURCE_NAME: "postgresql://postgres:postgres@postgres-primary:5432/atlas?sslmode=disable"
+    volumes:
+      - ./monitoring/postgres-exporter/queries.yml:/config/queries.yml:ro
+    depends_on: [postgres-primary]
+
+  postgres-exporter-replica:
+    <<: *postgres-exporter
+    environment:
+      DATA_SOURCE_NAME: "postgresql://postgres:postgres@postgres-replica:5432/atlas?sslmode=disable"
+    depends_on: [postgres-replica]
+
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    # Workers and replicator-sim run on the host in local dev. Docker Desktop resolves this name
+    # already; the mapping makes it work on Linux Docker Engine too.
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:13.2.4
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/atlas-realtime.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on: [prometheus]
+    ports: ["3001:3000"]
 
 volumes:
   pg-primary:
   pg-replica:
+  prometheus-data:
+  grafana-data:

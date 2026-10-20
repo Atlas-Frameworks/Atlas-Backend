@@ -1,0 +1,16 @@
+# Service "tracks": airplanes on the map (S-10). Install:
+#   helm upgrade --install tracks deploy/charts/view-service -f deploy/charts/view-service/values-tracks.yaml
+serviceName: tracks
+entityTypes:
+  - airplanes
+
+env:
+  # Shared Redis (with Sentinel) for all services; placeholder address until I-02 lands in-cluster.
+  REDIS_URL: redis://redis:6379
+  TICK_MS: "1000"
+
+# Secret with PG_PRIMARY_URL and PG_REPLICA_URL (created outside the chart).
+envFromSecret: atlas-view-service-db
+
+route:
+  host: ""

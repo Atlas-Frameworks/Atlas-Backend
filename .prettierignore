@@ -1,0 +1,20 @@
+node_modules/
+dist/
+coverage/
+.angular/
+out-tsc/
+package-lock.json
+**/src/gen/
+# Planning and design docs are hand-formatted; keep their diffs reviewable.
+*.md
+
+# Claude Code agent worktrees
+.claude/worktrees/
+
+# Helm templates contain {{ }} directives that are not valid YAML; the vendored Route schema is
+# generated (deploy/scripts/update-route-schema.sh); rendered manifests are build output.
+deploy/**/templates/
+deploy/schemas/
+deploy/.rendered/
+
+apps/client/.map-assets/

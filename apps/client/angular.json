@@ -27,10 +27,23 @@
               {
                 "glob": "**/*",
                 "input": "public"
+              },
+              {
+                "glob": "**/*",
+                "input": ".map-assets"
               }
             ],
-            "styles": [
-              "src/styles.scss"
+            "styles": ["src/styles.scss"],
+            "conditions": ["@atlas/source", "module"],
+            "allowedCommonJsDependencies": [
+              "mersenne-twister",
+              "urijs",
+              "protobufjs",
+              "lerc",
+              "bitmap-sdf",
+              "grapheme-splitter",
+              "nosleep.js",
+              "earcut"
             ]
           },
           "configurations": {
@@ -47,18 +60,30 @@
                   "maximumError": "8kB"
                 }
               ],
-              "outputHashing": "all"
+              "outputHashing": "all",
+              "conditions": ["@atlas/source", "module", "production"]
             },
             "development": {
               "optimization": false,
               "extractLicenses": false,
-              "sourceMap": true
+              "sourceMap": true,
+              "conditions": ["@atlas/source", "module", "development"]
             }
           },
           "defaultConfiguration": "production"
         },
         "serve": {
           "builder": "@angular/build:dev-server",
+          "options": {
+            "prebundle": {
+              "exclude": [
+                "@atlas/client-sdk",
+                "@atlas/protocol",
+                "@atlas/map-cesium",
+                "@atlas/map-deckgl"
+              ]
+            }
+          },
           "configurations": {
             "production": {
               "buildTarget": "client:build:production"

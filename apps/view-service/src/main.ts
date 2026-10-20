@@ -1,8 +1,17 @@
 import { NestFactory } from '@nestjs/core';
+import { NestPinoLogger, createLogger } from '@atlas/node-common';
 import { AppModule } from './app.module.js';
+import { loadConfig } from './config.js';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-  await app.listen(process.env.PORT ?? 3000);
+  const config = loadConfig();
+  const logger = createLogger('view-service', {
+    worker: config.WORKER_NAME,
+    level: config.LOG_LEVEL,
+    pretty: config.NODE_ENV === 'development',
+  });
+  const app = await NestFactory.create(AppModule, { logger: new NestPinoLogger(logger) });
+  await app.listen(config.PORT);
+  logger.info({ port: config.PORT, grpcPort: config.GRPC_PORT }, 'view-service listening');
 }
 await bootstrap();

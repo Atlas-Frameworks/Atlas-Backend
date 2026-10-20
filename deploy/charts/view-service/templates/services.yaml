@@ -1,0 +1,45 @@
+# Headless Service: governs the StatefulSet and gives each worker a DNS name for gRPC.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "view-service.headlessName" . }}
+  labels:
+    {{- include "view-service.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: {{ .Values.headless.publishNotReadyAddresses }}
+  selector:
+    {{- include "view-service.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: grpc
+      port: {{ .Values.ports.grpc }}
+      targetPort: grpc
+      protocol: TCP
+      appProtocol: grpc
+---
+# Client-facing Service: target of the Route (WebSockets) plus the HTTP port.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "view-service.fullname" . }}
+  labels:
+    {{- include "view-service.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "view-service.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.ports.http }}
+      targetPort: http
+      protocol: TCP
+    {{- if include "view-service.separateWsPort" . }}
+    - name: ws
+      port: {{ .Values.ports.ws }}
+      targetPort: ws
+      protocol: TCP
+    {{- end }}

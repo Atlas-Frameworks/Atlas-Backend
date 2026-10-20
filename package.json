@@ -3,7 +3,8 @@
   "private": true,
   "description": "Proof of concept for the Atlas realtime view service (see docs/architecture-plan.md)",
   "engines": {
-    "node": ">=24.15.0"
+    "node": ">=24.15.0",
+    "npm": ">=11.0.0"
   },
   "packageManager": "npm@11.21.1",
   "workspaces": [
@@ -11,18 +12,41 @@
     "apps/*"
   ],
   "scripts": {
+    "prebuild": "npm run generate -w @atlas/protocol",
     "build": "npm run build --workspaces --if-present",
+    "pretest": "npm run generate -w @atlas/protocol",
     "test": "npm run test --workspaces --if-present",
-    "lint": "npm run lint --workspaces --if-present",
+    "prelint": "npm run generate -w @atlas/protocol",
+    "lint": "npm run lint --workspaces --if-present && npm run format:check",
+    "pretypecheck": "npm run generate -w @atlas/protocol",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "dev:infra": "npm run infra:up",
+    "dev:watch": "node scripts/dev.mjs watch",
+    "dev:replicator": "node scripts/dev.mjs replicator",
+    "dev:view-service": "node scripts/dev.mjs view-service",
+    "dev:cluster": "node scripts/dev.mjs cluster",
+    "dev:client": "npm run start -w @atlas/client",
+    "dev:mock": "npm run mock -w @atlas/mock-server",
     "infra:up": "docker compose -f infra/docker-compose.yml up -d",
     "infra:down": "docker compose -f infra/docker-compose.yml down -v",
-    "infra:logs": "docker compose -f infra/docker-compose.yml logs -f --tail=100"
+    "infra:logs": "docker compose -f infra/docker-compose.yml logs -f --tail=100",
+    "deploy:validate": "bash deploy/scripts/validate.sh"
   },
   "allowScripts": {
     "esbuild@0.28.2": true,
     "@parcel/watcher@2.6.0": true,
     "lmdb@3.5.6": true,
-    "msgpackr-extract@3.0.4": true
+    "msgpackr-extract@3.0.4": true,
+    "fsevents": false,
+    "@bufbuild/buf": false
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.6",
+    "oxlint": "^1.58.0",
+    "oxlint-tsgolint": "^7.0.2001",
+    "prettier": "^3.8.1",
+    "typescript": "~6.0.2"
   }
 }

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cesium adapter bench</title>
+    <link rel="stylesheet" href="/cesium/Widgets/widgets.css" />
+    <style>
+      html,
+      body,
+      #globe {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #0b1016;
+      }
+      #panel {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        z-index: 1;
+        min-width: 260px;
+        padding: 10px 12px;
+        border-radius: 6px;
+        background: rgb(16 21 28 / 85%);
+        color: #dde3ea;
+        font:
+          13px/1.5 ui-monospace,
+          monospace;
+      }
+      #panel b {
+        color: #fff;
+      }
+      #panel label {
+        display: block;
+        margin-top: 4px;
+      }
+      #panel .ok {
+        color: #6fdc8c;
+      }
+      #panel .bad {
+        color: #ffb454;
+      }
+    </style>
+    <script>
+      window.CESIUM_BASE_URL = '/cesium/';
+    </script>
+  </head>
+  <body>
+    <div id="panel">
+      <div>FPS <b id="fps">–</b></div>
+      <div>applyFrame p50 <b id="p50">–</b> p95 <b id="p95">–</b> ms</div>
+      <div>frames/s <b id="fhz">–</b> · moved/frame <b id="moved">–</b></div>
+      <div>points <b id="count">–</b> · source <b id="source">–</b></div>
+      <label>
+        collection
+        <select id="kind">
+          <option value="buffer">BufferPointCollection</option>
+          <option value="primitive">PointPrimitiveCollection</option>
+          <option value="icons">BillboardCollection (icons)</option>
+        </select>
+      </label>
+      <div>picked <b id="picked">click a point</b></div>
+    </div>
+    <div id="globe"></div>
+    <script type="module" src="./dist/bench.js"></script>
+  </body>
+</html>

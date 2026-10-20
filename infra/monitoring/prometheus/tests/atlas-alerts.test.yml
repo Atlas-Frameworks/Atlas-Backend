@@ -1,0 +1,172 @@
+# promtool unit tests for the key alerts (task I-05). Run: see infra/monitoring/README.md.
+rule_files:
+  - ../rules/atlas-recording.yml
+  - ../rules/atlas-alerts.yml
+
+evaluation_interval: 15s
+
+tests:
+  # Commit-to-send: all observations land in the 5 s bucket, so p99 is ~5 s for over 2 min.
+  - interval: 15s
+    input_series:
+      - series: 'atlas_commit_to_send_seconds_bucket{worker="view-service-0",le="1"}'
+        values: "0+0x20"
+      - series: 'atlas_commit_to_send_seconds_bucket{worker="view-service-0",le="3"}'
+        values: "0+0x20"
+      - series: 'atlas_commit_to_send_seconds_bucket{worker="view-service-0",le="5"}'
+        values: "0+100x20"
+      - series: 'atlas_commit_to_send_seconds_bucket{worker="view-service-0",le="+Inf"}'
+        values: "0+100x20"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: AtlasCommitToSendP99High
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: AtlasCommitToSendP99High
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              plan_row: "Commit-to-send delay, p50 and p99"
+              summary: "Commit-to-send p99 is 4.98s (target under 3 s)"
+              description: "End-to-end delay from commit to the delta leaving a worker is over target."
+
+  # Commit-to-send under target: no alert.
+  - interval: 15s
+    input_series:
+      - series: 'atlas_commit_to_send_seconds_bucket{worker="view-service-0",le="1"}'
+        values: "0+100x20"
+      - series: 'atlas_commit_to_send_seconds_bucket{worker="view-service-0",le="+Inf"}'
+        values: "0+100x20"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: AtlasCommitToSendP99High
+        exp_alerts: []
+
+  # Replica lag: 3 s for 2 min fires; falls back to the replica's own view when the primary has none.
+  - interval: 15s
+    input_series:
+      - series: 'atlas_pg_replica_replay_delay_seconds{instance="postgres-replica"}'
+        values: "0 0 3x10"
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: AtlasReplicaLagHigh
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: AtlasReplicaLagHigh
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              plan_row: "Read replica lag"
+              summary: "Postgres read replica is 3s behind (limit 2 s)"
+              description: "Workers wait for the replica, then fall back to the primary after 2 s."
+
+  # Stream lag per worker and type.
+  - interval: 15s
+    input_series:
+      - series: 'atlas_stream_lag_seconds{worker="view-service-1",type="airplanes"}'
+        values: "8x10"
+      - series: 'atlas_stream_lag_seconds{worker="view-service-1",type="airports"}'
+        values: "1x10"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: AtlasStreamLagHigh
+        exp_alerts:
+          - exp_labels: { severity: critical, worker: view-service-1, type: airplanes }
+            exp_annotations:
+              plan_row: "Stream lag per worker"
+              summary: "view-service-1 is 8s behind changes:airplanes"
+
+  # Tick duration: p99 ~0.8 s against the default 1 s interval (no atlas_tick_interval_seconds).
+  - interval: 15s
+    input_series:
+      - series: 'up{job="view-service",worker="view-service-2"}'
+        values: "1x20"
+      - series: 'atlas_tick_duration_seconds_bucket{worker="view-service-2",le="0.5"}'
+        values: "0+0x20"
+      - series: 'atlas_tick_duration_seconds_bucket{worker="view-service-2",le="1"}'
+        values: "0+10x20"
+      - series: 'atlas_tick_duration_seconds_bucket{worker="view-service-2",le="+Inf"}'
+        values: "0+10x20"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: AtlasTickOverHalfInterval
+        exp_alerts:
+          - exp_labels: { severity: warning, worker: view-service-2 }
+            exp_annotations:
+              plan_row: "Tick duration versus interval, per worker"
+              summary: "view-service-2 tick p99 is 99.5% of the interval (limit 50%)"
+              description: "ASSUMPTION (pending S-09): interval is atlas_tick_interval_seconds if exported, else 1 s (TICK_MS default)."
+
+  # Same tick duration, but the worker reports a 2 s interval: under 50%, no alert.
+  - interval: 15s
+    input_series:
+      - series: 'up{job="view-service",worker="view-service-2"}'
+        values: "1x20"
+      - series: 'atlas_tick_interval_seconds{worker="view-service-2"}'
+        values: "2x20"
+      - series: 'atlas_tick_duration_seconds_bucket{worker="view-service-2",le="0.5"}'
+        values: "0+0x20"
+      - series: 'atlas_tick_duration_seconds_bucket{worker="view-service-2",le="1"}'
+        values: "0+10x20"
+      - series: 'atlas_tick_duration_seconds_bucket{worker="view-service-2",le="+Inf"}'
+        values: "0+10x20"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: AtlasTickOverHalfInterval
+        exp_alerts: []
+
+  # Debezium slot: 2 GiB unconfirmed WAL on the logical slot fires; the physical slot is ignored.
+  - interval: 15s
+    input_series:
+      - series: 'atlas_pg_replication_slot_lag_bytes{slot_name="atlas_outbox",slot_type="logical"}'
+        values: "2147483648x10"
+      - series: 'atlas_pg_replication_slot_lag_bytes{slot_name="replica_1",slot_type="physical"}'
+        values: "2147483648x10"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: AtlasDebeziumSlotLagBytes
+        exp_alerts:
+          - exp_labels: { severity: critical, slot_name: atlas_outbox }
+            exp_annotations:
+              plan_row: "Replication slot lag (change log Debezium hasn't read yet)"
+              summary: "Slot atlas_outbox is 2GiB behind (limit 1 GiB)"
+              description: "pg_current_wal_lsn() - confirmed_flush_lsn on the primary. Debezium is stalled or slow."
+
+  # Worker list: 2 membership keys in Redis but 3 workers up.
+  - interval: 15s
+    input_series:
+      - series: 'redis_keys_count{instance="redis-primary",db="db0",key="*:workers:view-service-*"}'
+        values: "2x10"
+      - series: 'up{job="view-service",worker="view-service-0"}'
+        values: "1x10"
+      - series: 'up{job="view-service",worker="view-service-1"}'
+        values: "1x10"
+      - series: 'up{job="view-service",worker="view-service-2"}'
+        values: "1x10"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: AtlasWorkerListMismatch
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              plan_row: "Workers in the list versus ready pods in OpenShift"
+              summary: "Redis worker list has 2 entries, which differs from the workers being scraped"
+              description: "ASSUMPTION: locally, 'ready pods' = view-service targets that are up, and worker names match view-service-*. In OpenShift compare with kube_pod_status_ready instead."
+
+  # Reconciliation drift: any mismatch fires at once.
+  - interval: 15s
+    input_series:
+      - series: 'atlas_reconcile_mismatches_total{worker="view-service-0"}'
+        values: "0 0 0 1 1 1"
+    alert_rule_test:
+      - eval_time: 15s
+        alertname: AtlasReconcileDrift
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: AtlasReconcileDrift
+        exp_alerts:
+          - exp_labels: { severity: critical, worker: view-service-0 }
+            exp_annotations:
+              plan_row: "Reconciliation drift count"
+              summary: "Reconciliation found 1 mismatches on view-service-0"
+              description: "A periodic full query disagreed with a view held in memory. Any drift is a bug."

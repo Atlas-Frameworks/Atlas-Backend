@@ -3,20 +3,30 @@
   "version": "0.0.0",
   "scripts": {
     "ng": "ng",
+    "prestart": "node scripts/map-assets.mjs",
     "start": "ng serve",
+    "prebuild": "node scripts/map-assets.mjs",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
-    "test": "ng test",
-    "typecheck": "tsc -p tsconfig.app.json --noEmit"
+    "test": "ng test --watch=false",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit",
+    "lint": "oxlint --type-aware --deny-warnings src"
   },
   "private": true,
   "dependencies": {
+    "@angular/cdk": "^22.2.3",
     "@angular/common": "^22.2.0",
     "@angular/compiler": "^22.2.0",
     "@angular/core": "^22.2.0",
     "@angular/forms": "^22.2.0",
     "@angular/platform-browser": "^22.2.0",
     "@angular/router": "^22.2.0",
+    "@atlas/client-sdk": "*",
+    "@atlas/map-cesium": "*",
+    "@atlas/map-deckgl": "*",
+    "@atlas/protocol": "*",
+    "cesium": "1.146.0",
+    "maplibre-gl": "^6.15.0",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0"
   },
@@ -25,7 +35,6 @@
     "@angular/cli": "^22.2.3",
     "@angular/compiler-cli": "^22.2.0",
     "jsdom": "^30.0.0",
-    "prettier": "^3.8.1",
     "typescript": "~6.0.2",
     "vitest": "^5.0.0"
   }

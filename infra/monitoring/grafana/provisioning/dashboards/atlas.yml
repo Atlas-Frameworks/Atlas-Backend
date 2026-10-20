@@ -1,0 +1,11 @@
+# Loads every dashboard JSON in /etc/grafana/dashboards (task I-05).
+apiVersion: 1
+providers:
+  - name: atlas
+    folder: Atlas
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards

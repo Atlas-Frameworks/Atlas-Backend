@@ -1,0 +1,72 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  gap: var(--atlas-space-2);
+  min-height: 100%;
+}
+
+p {
+  margin: 0;
+  font-size: var(--atlas-font-sm);
+}
+
+.row {
+  display: flex;
+  gap: var(--atlas-space-2);
+  align-items: center;
+
+  select,
+  input {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+.saved {
+  justify-content: space-between;
+}
+
+details {
+  display: flex;
+  flex-direction: column;
+  padding: var(--atlas-space-2);
+  background: var(--atlas-surface-sunken);
+  border-radius: var(--atlas-radius);
+
+  &[open] > summary {
+    margin-bottom: var(--atlas-space-2);
+  }
+}
+
+summary {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--atlas-space-1) var(--atlas-space-2);
+  align-items: center;
+}
+
+.sort {
+  display: flex;
+  gap: var(--atlas-space-1);
+
+  select {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+.actions {
+  justify-content: space-between;
+}
+
+.live {
+  flex: 1;
+  min-height: 18rem;
+}
