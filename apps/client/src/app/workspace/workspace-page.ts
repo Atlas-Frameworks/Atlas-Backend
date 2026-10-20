@@ -1,17 +1,21 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { DetailDrawer } from '../detail/detail-drawer';
+import { LayersPanel } from '../layers/layers-panel';
+import { MapView } from '../map/map-view';
 import { Router } from '@angular/router';
 import { AuthStore } from '../auth/auth.store';
 import { AtlasRealtimeService } from '../realtime/atlas-realtime.service';
 import { ConnectionStatus } from './connection-status';
+import { WorkspaceStore } from './workspace.store';
 
 /**
  * The map workspace: a full-screen map area with the top bar, the collapsible Layers panel (A-04)
  * and the detail drawer (A-05) floating over it. The panels are placeholders until those tasks land;
- * the Layers panel shows the live total of one airplanes view as a smoke test of the SDK service.
+ * the map (A-03), layers panel (A-04) and drawer (A-05) talk only through WorkspaceStore.
  */
 @Component({
   selector: 'app-workspace-page',
-  imports: [ConnectionStatus],
+  imports: [ConnectionStatus, MapView, LayersPanel, DetailDrawer],
   templateUrl: './workspace-page.html',
   styleUrl: './workspace-page.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -26,11 +30,15 @@ export class WorkspacePage {
   protected readonly staleSince = this.realtime.staleSince;
   protected readonly lastError = this.realtime.lastError;
 
-  /** Placeholder live data until the Layers panel (A-04) builds real views. */
-  private readonly airplanes = this.realtime.openView({ entityType: 'airplanes' });
-  protected readonly airplanesPage = this.realtime.subscribePage(this.airplanes, { pageSize: 50 });
+  private readonly store = inject(WorkspaceStore);
+
   protected readonly layersOpen = signal(true);
-  protected readonly drawerOpen = signal(false);
+  protected readonly drawerOpen = this.store.drawerOpen;
+
+  constructor() {
+    // Default view until the layers panel (A-04) manages views itself.
+    this.store.views.set([this.realtime.openView({ entityType: 'airplanes' })]);
+  }
 
   protected async signOut(): Promise<void> {
     this.auth.signOut();

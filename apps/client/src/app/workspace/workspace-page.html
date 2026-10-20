@@ -30,10 +30,7 @@
 
 <div class="stage">
   <section class="map" aria-label="Map">
-    <div class="map-placeholder">
-      <span>Map</span>
-      <small class="muted">Cesium view (A-03)</small>
-    </div>
+    <app-map-view />
   </section>
 
   <aside
@@ -50,11 +47,7 @@
       </button>
     </header>
     <div class="panel-body">
-      <p class="muted">Filters, grouping and live pages (A-04).</p>
-      <p class="live-total">
-        Airplanes in scope:
-        <strong>{{ airplanesPage.loading() ? '…' : airplanesPage.total() }}</strong>
-      </p>
+      <app-layers-panel />
     </div>
   </aside>
 
@@ -72,7 +65,7 @@
       </button>
     </header>
     <div class="panel-body">
-      <p class="muted">Select a point on the map or a row in a list (A-05).</p>
+      <app-detail-drawer />
     </div>
   </aside>
 </div>
