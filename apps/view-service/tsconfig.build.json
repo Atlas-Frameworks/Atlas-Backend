@@ -2,8 +2,18 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "rootDir": "./src",
+    "outDir": "./dist",
+    // Keep build info inside dist/, so deleting dist/ (nest build does) always forces a full emit.
+    "tsBuildInfoFile": "./dist/tsconfig.build.tsbuildinfo",
+    // Resolve @atlas/* packages to their compiled dist/, not their sources.
     "customConditions": []
   },
   "include": ["src"],
-  "exclude": ["node_modules", "test", "dist", "**/*spec.ts"]
+  "exclude": ["node_modules", "test", "dist", "**/*spec.ts"],
+  // `tsc -b` (npm run dev:watch) rebuilds these packages first and recompiles the app when they change.
+  "references": [
+    { "path": "../../packages/protocol/tsconfig.build.json" },
+    { "path": "../../packages/view-engine/tsconfig.build.json" },
+    { "path": "../../packages/node-common/tsconfig.build.json" }
+  ]
 }

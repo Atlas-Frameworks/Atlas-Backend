@@ -18,6 +18,12 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "dev:infra": "npm run infra:up",
+    "dev:watch": "node scripts/dev.mjs watch",
+    "dev:replicator": "node scripts/dev.mjs replicator",
+    "dev:view-service": "node scripts/dev.mjs view-service",
+    "dev:cluster": "node scripts/dev.mjs cluster",
+    "dev:client": "npm run start -w @atlas/client",
     "infra:up": "docker compose -f infra/docker-compose.yml up -d",
     "infra:down": "docker compose -f infra/docker-compose.yml down -v",
     "infra:logs": "docker compose -f infra/docker-compose.yml logs -f --tail=100"
@@ -30,8 +36,10 @@
     "fsevents": false
   },
   "devDependencies": {
+    "concurrently": "^10.0.6",
     "oxlint": "^1.58.0",
     "oxlint-tsgolint": "^7.0.2001",
-    "prettier": "^3.8.1"
+    "prettier": "^3.8.1",
+    "typescript": "~6.0.2"
   }
 }
