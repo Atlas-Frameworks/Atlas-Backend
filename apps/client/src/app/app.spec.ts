@@ -1,23 +1,44 @@
 import { TestBed } from '@angular/core/testing';
-import { App } from './app';
+import { provideRouter, Router } from '@angular/router';
+import { RouterTestingHarness } from '@angular/router/testing';
+import { routes } from './app.routes';
+import { AuthStore } from './auth/auth.store';
 
-describe('App', () => {
-  beforeEach(async () => {
-    await TestBed.configureTestingModule({
-      imports: [App],
-    }).compileComponents();
+describe('routes', () => {
+  beforeEach(() => {
+    TestBed.configureTestingModule({ providers: [provideRouter(routes)] });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>(() => undefined)),
+    );
   });
 
-  it('should create the app', () => {
-    const fixture = TestBed.createComponent(App);
-    const app = fixture.componentInstance;
-    expect(app).toBeTruthy();
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('redirects / to /login without a token', async () => {
+    const harness = await RouterTestingHarness.create();
+    await harness.navigateByUrl('/');
+    expect(TestBed.inject(Router).url).toBe('/login');
+    expect(harness.routeNativeElement?.querySelector('h1')?.textContent).toContain('Atlas');
   });
 
-  it('should render title', async () => {
-    const fixture = TestBed.createComponent(App);
-    await fixture.whenStable();
-    const compiled = fixture.nativeElement as HTMLElement;
-    expect(compiled.querySelector('h1')?.textContent).toContain('Hello, client');
+  it('renders the workspace layout once signed in', async () => {
+    TestBed.inject(AuthStore).signIn({ token: 't', scope: { countries: ['c1'] }, label: 'Chad' });
+    const harness = await RouterTestingHarness.create();
+    await harness.navigateByUrl('/');
+    const el = harness.routeNativeElement;
+    expect(TestBed.inject(Router).url).toBe('/');
+    expect(el?.querySelector('.top-bar')?.textContent).toContain('Chad');
+    expect(el?.querySelector('section.map')).toBeTruthy();
+    expect(el?.querySelector('#layers-panel')).toBeTruthy();
+    expect(el?.querySelector('#detail-drawer')).toBeTruthy();
+    expect(el?.querySelector('app-connection-status')).toBeTruthy();
+  });
+
+  it('serves the map bench placeholder without a token', async () => {
+    const harness = await RouterTestingHarness.create();
+    await harness.navigateByUrl('/dev/map-bench');
+    expect(TestBed.inject(Router).url).toBe('/dev/map-bench');
+    expect(harness.routeNativeElement?.textContent).toContain('Map benchmark');
   });
 });

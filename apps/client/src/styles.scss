@@ -1,1 +1,88 @@
-/* You can add global styles to this file, and also import other style files */
+@use 'styles/tokens';
+
+:root {
+  @include tokens.emit-custom-properties;
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--atlas-font-sans);
+  font-size: var(--atlas-font-md);
+  line-height: 1.4;
+  color: var(--atlas-text);
+  background: var(--atlas-map-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+app-root {
+  display: block;
+  height: 100%;
+}
+
+.muted {
+  color: var(--atlas-text-muted);
+}
+
+.error {
+  margin: 0;
+  color: var(--atlas-danger);
+}
+
+.btn {
+  padding: var(--atlas-space-1) var(--atlas-space-3);
+  font: inherit;
+  color: var(--atlas-text);
+  cursor: pointer;
+  background: var(--atlas-surface-raised);
+  border: 1px solid var(--atlas-border);
+  border-radius: var(--atlas-radius);
+
+  &:hover:not(:disabled) {
+    border-color: var(--atlas-accent);
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+
+  &.primary {
+    padding: var(--atlas-space-2) var(--atlas-space-3);
+    font-weight: 600;
+    color: #04121c;
+    background: var(--atlas-accent);
+    border-color: var(--atlas-accent-strong);
+  }
+
+  &.icon {
+    padding: var(--atlas-space-1) var(--atlas-space-2);
+    background: transparent;
+    border-color: transparent;
+  }
+}
+
+.link {
+  padding: 0;
+  font: inherit;
+  color: var(--atlas-accent);
+  cursor: pointer;
+  background: none;
+  border: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--atlas-accent);
+  outline-offset: 2px;
+}

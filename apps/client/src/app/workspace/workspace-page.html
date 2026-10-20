@@ -1,0 +1,70 @@
+<header class="top-bar">
+  <button
+    type="button"
+    class="btn icon"
+    [attr.aria-expanded]="layersOpen()"
+    aria-controls="layers-panel"
+    (click)="layersOpen.set(!layersOpen())"
+  >
+    ☰ Layers
+  </button>
+  <span class="brand">Atlas</span>
+  <span class="muted scope">{{ session()?.label }}</span>
+  <span class="spacer"></span>
+  <app-connection-status connection="idle" />
+  <button
+    type="button"
+    class="btn"
+    [attr.aria-expanded]="drawerOpen()"
+    aria-controls="detail-drawer"
+    (click)="drawerOpen.set(!drawerOpen())"
+  >
+    Details
+  </button>
+  <button type="button" class="btn" (click)="signOut()">Sign out</button>
+</header>
+
+<div class="stage">
+  <section class="map" aria-label="Map">
+    <div class="map-placeholder">
+      <span>Map</span>
+      <small class="muted">Cesium view (A-03)</small>
+    </div>
+  </section>
+
+  <aside
+    id="layers-panel"
+    class="panel layers"
+    [class.collapsed]="!layersOpen()"
+    aria-label="Layers"
+    [attr.aria-hidden]="!layersOpen()"
+  >
+    <header class="panel-header">
+      <h2>Layers</h2>
+      <button type="button" class="btn icon" aria-label="Collapse" (click)="layersOpen.set(false)">
+        ‹
+      </button>
+    </header>
+    <div class="panel-body">
+      <p class="muted">Filters, grouping and live pages (A-04).</p>
+    </div>
+  </aside>
+
+  <aside
+    id="detail-drawer"
+    class="panel drawer"
+    [class.collapsed]="!drawerOpen()"
+    aria-label="Details"
+    [attr.aria-hidden]="!drawerOpen()"
+  >
+    <header class="panel-header">
+      <h2>Details</h2>
+      <button type="button" class="btn icon" aria-label="Close" (click)="drawerOpen.set(false)">
+        ×
+      </button>
+    </header>
+    <div class="panel-body">
+      <p class="muted">Select a point on the map or a row in a list (A-05).</p>
+    </div>
+  </aside>
+</div>

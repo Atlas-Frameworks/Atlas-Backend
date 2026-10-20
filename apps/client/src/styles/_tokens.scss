@@ -1,0 +1,80 @@
+// Design tokens. SCSS maps are the source; they are emitted once as CSS custom properties on :root
+// (see styles.scss), and components only use the `--atlas-*` variables.
+
+$colors: (
+  // Dark theme tuned for a map: low-luminance surfaces so points and labels stand out.
+  map-bg: #0b1016,
+  map-grid: rgb(120 150 180 / 7%),
+  surface: #121a23,
+  surface-sunken: #0d141c,
+  surface-raised: #1b2632,
+  surface-overlay: rgb(18 26 35 / 88%),
+  border: #253242,
+  text: #c7d2de,
+  text-strong: #eef3f8,
+  text-muted: #7d8b99,
+  accent: #4cc2ff,
+  accent-strong: #1f9fe6,
+  ok: #3ccf7e,
+  warn: #f2b84b,
+  stale: #a58cff,
+  danger: #ff6b6b
+);
+
+$space: (
+  1: 0.25rem,
+  2: 0.5rem,
+  3: 0.75rem,
+  4: 1rem,
+  5: 1.5rem,
+  6: 2rem,
+);
+
+$radius: (
+  radius-sm: 4px,
+  radius: 6px,
+  radius-lg: 10px,
+);
+
+$font: (
+  font-sans: (
+    Inter,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif,
+  ),
+  font-mono: (
+    ui-monospace,
+    'SF Mono',
+    Menlo,
+    monospace,
+  ),
+  font-sm: 0.8125rem,
+  font-md: 0.9375rem,
+  font-lg: 1.125rem,
+  font-xl: 1.5rem,
+);
+
+$layout: (
+  top-bar-height: 3rem,
+  panel-width: 22rem,
+  drawer-width: 26rem,
+  shadow: 0 8px 24px rgb(0 0 0 / 45%),
+  motion: 160ms ease-out,
+);
+
+@mixin emit-custom-properties {
+  @each $name, $value in $colors {
+    --atlas-#{$name}: #{$value};
+  }
+  @each $name, $value in $space {
+    --atlas-space-#{$name}: #{$value};
+  }
+  @each $map in ($radius, $font, $layout) {
+    @each $name, $value in $map {
+      --atlas-#{$name}: #{$value};
+    }
+  }
+}
