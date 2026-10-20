@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "composite": true,
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "customConditions": []
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.spec.ts"],
+  "references": [{ "path": "../protocol/tsconfig.build.json" }]
+}

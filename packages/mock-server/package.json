@@ -1,0 +1,41 @@
+{
+  "name": "@atlas/mock-server",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Mock view service speaking the real client protocol (contracts §3): moving entities, pages, details, fault injection, recorder and replayer. See docs/tasks/boaz/06-client-sdk.md (C-07).",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "@atlas/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "atlas-mock-server": "dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "mock": "tsc -b tsconfig.build.json && node dist/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "oxlint --type-aware --deny-warnings src test",
+    "test": "vitest run",
+    "bench": "vitest run --config vitest.perf.config.ts"
+  },
+  "dependencies": {
+    "@atlas/protocol": "*",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@atlas/client-sdk": "*",
+    "@types/node": "^24.0.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.2"
+  },
+  "files": [
+    "dist"
+  ]
+}

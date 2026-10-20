@@ -55,6 +55,7 @@ Follow the plan's cold-start order ("Recovery after crashes and restarts"):
 | `npm run dev:replicator` | Builds once and runs replicator-sim. Doesn't recompile; run `dev:watch` alongside it. |
 | `npm run dev:watch` | One `tsc -b --watch` for all packages and Node apps. Running workers restart when it writes `dist/`. |
 | `npm run dev:client` | `ng serve` with live reload. |
+| `npm run dev:mock` | The mock view service (C-07) on port 8090: the real client protocol over simulated data, dev token and scopes, fault injection. The client works against it with no backend or infrastructure. See [packages/mock-server/README.md](../packages/mock-server/README.md). |
 | `npm run infra:logs` | Follows all container logs. |
 | `npm run infra:down` | Stops containers **and deletes all data volumes**. |
 

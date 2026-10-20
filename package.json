@@ -28,6 +28,7 @@
     "dev:view-service": "node scripts/dev.mjs view-service",
     "dev:cluster": "node scripts/dev.mjs cluster",
     "dev:client": "npm run start -w @atlas/client",
+    "dev:mock": "npm run mock -w @atlas/mock-server",
     "infra:up": "docker compose -f infra/docker-compose.yml up -d",
     "infra:down": "docker compose -f infra/docker-compose.yml down -v",
     "infra:logs": "docker compose -f infra/docker-compose.yml logs -f --tail=100",

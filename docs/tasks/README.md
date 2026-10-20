@@ -92,7 +92,7 @@ Size: S ≈ 1–2 days, M ≈ 3–5 days, L ≈ 1–2 weeks for one person.
 | C-04 | Worker bridge and public API | C-01 | M | boaz | todo |
 | C-05 | MapAdapter interface and Cesium adapter | C-02 | L | boaz | todo |
 | C-06 | deck.gl / MapLibre adapter (stretch) | C-05 | M | boaz | todo |
-| C-07 | Mock protocol server and deterministic SDK tests | P-01 | M | boaz | todo |
+| C-07 | Mock protocol server and deterministic SDK tests | P-01 | M | boaz (Claude) | in review |
 | A-01 | Angular app shell and login stub | F-01 | M | boaz | todo |
 | A-02 | Angular SDK service (signals) | C-04, A-01 | S | boaz | todo |
 | A-03 | Map component | C-05, A-02 | M | boaz | todo |

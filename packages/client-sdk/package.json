@@ -34,6 +34,6 @@
     "dist"
   ],
   "dependencies": {
-    "@atlas/protocol": "0.0.1"
+    "@atlas/protocol": "*"
   }
 }
