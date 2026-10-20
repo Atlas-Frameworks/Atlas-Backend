@@ -1,0 +1,107 @@
+@if (selected(); as ref) {
+  <header class="head">
+    <div class="titles">
+      <span class="type">{{ typeLabel() }}</span>
+      <h3 class="title">{{ title() }}</h3>
+    </div>
+    <div class="badges">
+      @if (stale()) {
+        <span class="badge stale" data-test="stale" [attr.title]="staleText()">{{
+          staleText()
+        }}</span>
+      }
+      @if (lastRow(); as r) {
+        <span class="badge" title="Entity version">v{{ r.version }}</span>
+      }
+    </div>
+  </header>
+
+  <div class="actions">
+    <button
+      type="button"
+      class="btn"
+      data-test="fly-to"
+      [disabled]="removed()"
+      (click)="showOnMap(ref)"
+    >
+      Show on map
+    </button>
+    <button
+      type="button"
+      class="btn"
+      data-test="find-in-list"
+      [disabled]="removed()"
+      (click)="findInList(ref)"
+    >
+      Find in list
+    </button>
+  </div>
+
+  @if (removed()) {
+    <p class="removed" role="status" data-test="removed">
+      <strong>Removed.</strong> This {{ typeLabel().toLowerCase() }} was deleted or is no longer in
+      your scope.
+    </p>
+  } @else if (node(); as n) {
+    <div class="body" [class.is-stale]="stale()">
+      <ng-container [ngTemplateOutlet]="nodeTpl" [ngTemplateOutletContext]="{ $implicit: n }" />
+    </div>
+  } @else if (loading()) {
+    <p class="muted" role="status">Loading…</p>
+  }
+} @else {
+  <p class="muted empty" data-test="empty">Select a point on the map or a row in a list.</p>
+}
+
+<ng-template #nodeTpl let-n>
+  @if (n.fields.length) {
+    <dl class="fields">
+      @for (f of n.fields; track f.key) {
+        <div class="field" [attr.data-field]="f.key">
+          <dt>{{ f.label }}</dt>
+          <dd>{{ f.text }}</dd>
+        </div>
+      }
+    </dl>
+  }
+  @for (t of n.tables; track t.key) {
+    <section class="nested" [attr.data-table]="t.key">
+      <h4>
+        {{ t.label }} <span class="muted">({{ t.rows.length }})</span>
+      </h4>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              @for (c of t.columns; track c.key) {
+                <th scope="col">{{ c.label }}</th>
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @for (cells of t.rows; track $index) {
+              <tr>
+                @for (cell of cells; track $index) {
+                  @if (t.columns[$index].isId) {
+                    <td class="id" [attr.title]="cell">{{ cell }}</td>
+                  } @else {
+                    <td>{{ cell }}</td>
+                  }
+                }
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+  }
+  @for (s of n.sections; track s.key) {
+    <section class="nested" [attr.data-section]="s.key">
+      <h4>{{ s.label }}</h4>
+      <ng-container
+        [ngTemplateOutlet]="nodeTpl"
+        [ngTemplateOutletContext]="{ $implicit: s.node }"
+      />
+    </section>
+  }
+</ng-template>
