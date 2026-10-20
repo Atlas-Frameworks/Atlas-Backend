@@ -50,7 +50,10 @@ describe('recorder and replayer (C-07)', () => {
     const file = join(dir, 'session.jsonl');
     const proxy = new MockServer({ port: 0, proxy: `ws://127.0.0.1:${realPort}`, record: file });
     const proxyPort = await proxy.listen();
-    const live = await session(`ws://127.0.0.1:${proxyPort}/ws`, 500);
+    // Stop the world before the client disconnects, so no frame is in flight while it closes.
+    const live = await session(`ws://127.0.0.1:${proxyPort}/ws`, 500, () => {
+      setTimeout(() => real.setPaused(true), 350);
+    });
     await proxy.close();
     await real.close();
 

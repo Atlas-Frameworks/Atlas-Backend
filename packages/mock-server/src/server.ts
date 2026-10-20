@@ -350,8 +350,10 @@ export class MockServer {
     });
     upstream.on('message', (data: RawData) => {
       const bytes = toBytes(data);
+      if (ws.readyState !== WebSocket.OPEN) return;
+      // Record only what the client was actually sent.
       this.record(id, 'out', bytes);
-      if (ws.readyState === WebSocket.OPEN) ws.send(bytes);
+      ws.send(bytes);
     });
     ws.on('message', (data: RawData) => {
       const bytes = toBytes(data);

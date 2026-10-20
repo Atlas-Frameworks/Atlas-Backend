@@ -3,7 +3,8 @@ import type { PageState } from '@atlas/client-sdk';
 /** How long after the last scroll event the list counts as idle. */
 export const SCROLL_IDLE_MS = 1_500;
 
-type TimerHandle = ReturnType<typeof setTimeout>;
+/** Browser timer ids (`window.setTimeout`), not Node's `Timeout`, even when Node types are loaded. */
+type TimerHandle = number;
 
 export interface FreezeTimers {
   set(fn: () => void, ms: number): TimerHandle;
@@ -11,8 +12,8 @@ export interface FreezeTimers {
 }
 
 const browserTimers: FreezeTimers = {
-  set: (fn, ms) => setTimeout(fn, ms),
-  clear: (h) => clearTimeout(h),
+  set: (fn, ms) => window.setTimeout(fn, ms),
+  clear: (h) => window.clearTimeout(h),
 };
 
 /**
