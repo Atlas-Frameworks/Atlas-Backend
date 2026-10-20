@@ -7,3 +7,6 @@ package-lock.json
 **/src/gen/
 # Planning and design docs are hand-formatted; keep their diffs reviewable.
 *.md
+
+# Claude Code agent worktrees
+.claude/worktrees/

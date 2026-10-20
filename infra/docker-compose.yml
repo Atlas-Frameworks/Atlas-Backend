@@ -155,17 +155,42 @@ services:
       redis-replica:
         condition: service_healthy
 
-  # ---------- Debezium Server: outbox -> Redis Streams (task I-03) ----------
+  # ---------- Debezium Server: outbox -> Redis Streams (task I-03, see infra/debezium/README.md) ----------
+  # One instance only: a replication slot serves one reader. Read position lives in Postgres
+  # (debezium_offsets), so the container keeps no state.
   debezium:
-    image: quay.io/debezium/server:3.7.0.Final
+    # The official image plus the Outbox Event Router jar on the classpath (see debezium/Dockerfile).
+    build: ./debezium
+    image: atlas-realtime/debezium-server:3.7.0.Final
+    restart: unless-stopped
+    stop_grace_period: 60s
     volumes:
       - ./debezium/application.properties:/debezium/config/application.properties:ro
     depends_on:
       postgres-primary:
         condition: service_healthy
+      # synchronized_standby_slots makes Debezium wait for the replica, so start after it.
+      postgres-replica:
+        condition: service_healthy
       redis-proxy:
         condition: service_started
     ports: ["8080:8080"]
+    # Watchdog. When the Redis master is demoted mid-write, the Redis sink fails its engine
+    # (JedisDataException "UNBLOCKED ... master -> replica") but the JVM keeps running, so
+    # `restart:` never fires. This check does what an OpenShift liveness probe on /q/health/live
+    # does: if liveness is DOWN after this JVM was UP once, or never came UP within 120 s, it sends
+    # SIGTERM to the JVM; Debezium then restarts and resumes from its offset in Postgres.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          started=$$(stat -c %Y /proc/1);
+          if curl -sf -m 3 localhost:8080/q/health/live > /dev/null; then touch /tmp/was-live-$$started; exit 0; fi;
+          if [ -f /tmp/was-live-$$started ] || [ $$(( $$(date +%s) - started )) -gt 120 ]; then kill 1; fi;
+          exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 3
 
 volumes:
   pg-primary:

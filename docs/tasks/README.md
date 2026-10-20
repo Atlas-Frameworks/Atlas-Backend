@@ -54,7 +54,7 @@ Size: S ≈ 1–2 days, M ≈ 3–5 days, L ≈ 1–2 weeks for one person.
 | F-03 | Shared config, logging and errors package | F-01 | S | dvir (Claude) | in review |
 | I-01 | Postgres primary + replica with failover slots | – | M | dvir (Claude) | in review |
 | I-02 | Redis + Sentinel + master-only proxy | – | M | dvir (Claude) | in review |
-| I-03 | Debezium Server outbox pipeline | I-01, I-02, W-01 | M | | todo |
+| I-03 | Debezium Server outbox pipeline | I-01, I-02, W-01 | M | dvir (Claude) | in review |
 | I-04 | OpenShift deployment manifests | S-01, S-07 | M | | todo |
 | I-05 | Prometheus and Grafana dashboards | S-09 | S | | todo |
 | P-01 | Protobuf schemas and code generation | – | M | | todo |
