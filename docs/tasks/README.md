@@ -88,7 +88,7 @@ Size: S ≈ 1–2 days, M ≈ 3–5 days, L ≈ 1–2 weeks for one person.
 | S-10 | Multiple services from one engine | S-04 | S | dvir | todo |
 | C-01 | SDK core: transport, protocol, sequence, reconnect | P-01 | L | boaz (Claude) | in review |
 | C-02 | Map data store and frame scheduling | C-01 | M | boaz (Claude) | in review |
-| C-03 | Pages, detail and locate | C-01 | M | boaz | todo |
+| C-03 | Pages, detail and locate | C-01 | M | boaz (Claude) | in review |
 | C-04 | Worker bridge and public API | C-01 | M | boaz | todo |
 | C-05 | MapAdapter interface and Cesium adapter | C-02 | L | boaz | todo |
 | C-06 | deck.gl / MapLibre adapter (stretch) | C-05 | M | boaz | todo |

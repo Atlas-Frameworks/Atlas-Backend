@@ -3,6 +3,10 @@ import type { ClientMessage, ServerMessageInit } from '@atlas/protocol';
 import { InMemoryNetwork } from '../core/in-memory-transport.js';
 import type { InMemoryServerEnd } from '../core/in-memory-transport.js';
 
+type ServerBodyInit = NonNullable<ServerMessageInit['body']>;
+/** Init shape of a PageWindow (for building test frames). */
+export type PageWindowInit = Extract<ServerBodyInit, { case: 'pageWindow' }>['value'];
+
 type ClientCase = NonNullable<ClientMessage['body']['case']>;
 type ClientValue<C extends ClientCase> = Extract<ClientMessage['body'], { case: C }>['value'];
 

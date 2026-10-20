@@ -61,3 +61,20 @@ Benchmark (`npm run bench -w @atlas/client-sdk`, Node 24, Apple Silicon laptop):
 | Apply a delta of 5,000 changed positions into a 30,000-entity store | < 2 ms | p50 0.72 ms, p95 1.03 ms |
 | Build a 30,000-entity frame (500 labels) | < 1 ms | p50 0.45 ms, p95 0.52 ms |
 | Heap growth per frame (GC-free windows) | no new buffers | ~520 B (the small frame object; buffers ≈ 1 MB are reused) |
+
+## Pages, detail and locate (C-03)
+
+- `PageSubscription` is one live server-side page (`SetWindow` with a client-chosen `windowRef`). Each
+  `PageWindow` (snapshot or delta) puts its `rows` into the shared `RowCache` and rebuilds the page
+  from `orderedIds`. Rows are tracked by entity id. If an id arrives without a cached row, the page
+  asks for a fresh snapshot (`Resync`).
+- The `RowCache` (one per entity type) counts references per open page and evicts a row as soon as
+  no open page (or prefetch) shows it, so it holds only the rows on open pages plus prefetch.
+- `prefetch: true` also opens window `<ref>-next` on the following page; moving to it shows the
+  prefetched rows at once while the main window's snapshot arrives.
+- `setFreezeOrder(true)` (hover or scroll) keeps the shown order and updates rows in place;
+  `pendingReorder` counts positions that differ from the latest server order. `false` applies the
+  latest order. A snapshot of another page (the list shrank) always replaces the frozen order.
+- `DetailSubscription`: the live row, or `removed: true`.
+- `locate(id, {jump})` returns `{found, groupPath, page}` from `LocateResult`; with `jump` the page
+  moves there.
