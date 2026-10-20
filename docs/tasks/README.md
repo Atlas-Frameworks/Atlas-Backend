@@ -96,7 +96,7 @@ Size: S ≈ 1–2 days, M ≈ 3–5 days, L ≈ 1–2 weeks for one person.
 | A-01 | Angular app shell and login stub | F-01 | M | boaz (Claude) | in review |
 | A-02 | Angular SDK service (signals) | C-04, A-01 | S | boaz (Claude) | in review |
 | A-03 | Map component | C-05, A-02 | M | boaz (Claude) | in review |
-| A-04 | Layers panel: filters, grouping, live pages | A-02, C-03 | L | boaz | todo |
+| A-04 | Layers panel: filters, grouping, live pages | A-02, C-03 | L | boaz (Claude) | in review |
 | A-05 | Detail drawer | A-02, C-03 | S | boaz | todo |
 | W-01 | Final schema, roles and write function | I-01, P-02 | M | snir | todo |
 | W-02 | Replicator write path (NestJS) | W-01 | M | snir | todo |

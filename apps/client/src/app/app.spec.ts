@@ -4,6 +4,7 @@ import { RouterTestingHarness } from '@angular/router/testing';
 import { routes } from './app.routes';
 import { AuthStore } from './auth/auth.store';
 import { MAP_ENGINE_FACTORY } from './map/map-engine';
+import { RegistryApi, parseRegistry } from './layers/registry';
 import { ATLAS_CLIENT_FACTORY } from './realtime/atlas-client-factory';
 import { FakeAtlasClient, IDLE } from './realtime/fake-atlas-client';
 
@@ -17,6 +18,13 @@ describe('routes', () => {
         provideRouter(routes),
         // No WebGL in jsdom: the map never finishes loading here.
         { provide: MAP_ENGINE_FACTORY, useValue: () => new Promise(() => undefined) },
+        // The layers panel opens the workspace's view once the registry is loaded.
+        {
+          provide: RegistryApi,
+          useValue: {
+            load: async () => parseRegistry({ types: [{ type: 'airplanes', fields: [] }] }),
+          },
+        },
         {
           provide: ATLAS_CLIENT_FACTORY,
           useValue: (config: FakeAtlasClient['config']) => {
