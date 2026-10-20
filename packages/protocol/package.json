@@ -8,15 +8,22 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
+      "@atlas/source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "build": "tsc -b tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "oxlint --type-aware --deny-warnings src",
+    "test": "vitest run --passWithNoTests"
   },
   "devDependencies": {
-    "typescript": "~6.0.2"
-  }
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.2"
+  },
+  "files": [
+    "dist"
+  ]
 }

@@ -52,21 +52,36 @@ services:
   # Each node copies its config to a writable path, because Sentinel rewrites node configs on failover.
   redis-primary:
     image: *redis-image
-    entrypoint: ["/bin/sh", "-c", "cp /config/redis.conf /data/redis.conf && exec redis-server /data/redis.conf"]
+    entrypoint:
+      [
+        "/bin/sh",
+        "-c",
+        "cp /config/redis.conf /data/redis.conf && exec redis-server /data/redis.conf",
+      ]
     volumes:
       - ./redis/redis.conf:/config/redis.conf:ro
     ports: ["6379:6379"]
 
   redis-replica:
     image: *redis-image
-    entrypoint: ["/bin/sh", "-c", "cp /config/redis.conf /data/redis.conf && exec redis-server /data/redis.conf --replicaof redis-primary 6379"]
+    entrypoint:
+      [
+        "/bin/sh",
+        "-c",
+        "cp /config/redis.conf /data/redis.conf && exec redis-server /data/redis.conf --replicaof redis-primary 6379",
+      ]
     volumes:
       - ./redis/redis.conf:/config/redis.conf:ro
     depends_on: [redis-primary]
 
   sentinel-1: &sentinel
     image: *redis-image
-    entrypoint: ["/bin/sh", "-c", "cp /config/sentinel.conf /tmp/sentinel.conf && exec redis-sentinel /tmp/sentinel.conf"]
+    entrypoint:
+      [
+        "/bin/sh",
+        "-c",
+        "cp /config/sentinel.conf /tmp/sentinel.conf && exec redis-sentinel /tmp/sentinel.conf",
+      ]
     volumes:
       - ./redis/sentinel.conf:/config/sentinel.conf:ro
     depends_on: [redis-primary, redis-replica]

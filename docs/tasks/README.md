@@ -49,7 +49,7 @@ Size: S ≈ 1–2 days, M ≈ 3–5 days, L ≈ 1–2 weeks for one person.
 
 | ID | Title | Depends on | Size | Owner | Status |
 | --- | --- | --- | --- | --- | --- |
-| F-01 | Monorepo tooling, lint and CI | – | S | | todo |
+| F-01 | Monorepo tooling, lint and CI | – | S | dvir (Claude) | in review |
 | F-02 | Developer workflow scripts and docs | F-01 | S | | todo |
 | F-03 | Shared config, logging and errors package | F-01 | S | | todo |
 | I-01 | Postgres primary + replica with failover slots | – | M | | todo |

@@ -1,0 +1,38 @@
+{
+  "$schema": "../../node_modules/oxlint/configuration_schema.json",
+  "extends": ["../../.oxlintrc.json"],
+  "rules": {
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          { "name": "pg", "message": "view-engine has no I/O (AGENTS.md)." },
+          { "name": "ioredis", "message": "view-engine has no I/O (AGENTS.md)." },
+          { "name": "redis", "message": "view-engine has no I/O (AGENTS.md)." },
+          { "name": "uWebSockets.js", "message": "view-engine has no I/O (AGENTS.md)." },
+          { "name": "@grpc/grpc-js", "message": "view-engine has no I/O (AGENTS.md)." }
+        ],
+        "patterns": [
+          {
+            "group": [
+              "node:*",
+              "fs",
+              "net",
+              "http",
+              "https",
+              "dgram",
+              "child_process",
+              "timers",
+              "timers/*"
+            ],
+            "message": "view-engine has no I/O (AGENTS.md)."
+          },
+          {
+            "group": ["@atlas/view-service", "@atlas/replicator-sim", "@atlas/client"],
+            "message": "Packages never depend on apps."
+          }
+        ]
+      }
+    ]
+  }
+}
