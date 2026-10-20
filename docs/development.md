@@ -40,7 +40,7 @@ Follow the plan's cold-start order ("Recovery after crashes and restarts"):
 2. **Redis** (primary, replica, Sentinels, then the master-only proxy).
 3. **Debezium Server** (needs Postgres healthy and the proxy up).
 
-   `npm run dev:infra` starts 1 to 3 in this order through compose `depends_on`.
+   `npm run dev:infra` starts 1 to 3 in this order through compose `depends_on` and healthchecks. Debezium waits for the replica too. The first run pulls about 2 GB of images and builds the local Debezium image (`infra/debezium/Dockerfile`); after that a cold start takes about 20 s.
 4. **view-service workers** (`dev:cluster`, or `dev:view-service` for one).
 5. **replicator-sim** (`dev:replicator`).
 6. **Client** (`dev:client`).
@@ -133,7 +133,8 @@ Before opening a PR: `npm run lint && npm run typecheck && npm run build && npm 
 | `EADDRINUSE` | Another process holds the port: `lsof -iTCP:<port> -sTCP:LISTEN` (macOS/Linux) or `netstat -ano \| findstr :<port>` (Windows). |
 | Port 5432 already in use | A local Postgres is running. Stop it (`brew services stop postgresql`), or change the host port in `infra/docker-compose.yml`. |
 | Workers can't reach Redis or Postgres | Apps on your machine use `localhost` ports, not container names. Redis goes through the proxy on 6380. |
-| Debezium restarts in a loop | `docker compose -f infra/docker-compose.yml logs debezium`. Usually Postgres or the proxy isn't ready yet; it retries. |
+| Debezium restarts in a loop | `docker compose -f infra/docker-compose.yml logs debezium`. A watchdog restarts it whenever `/q/health/live` is DOWN (see infra/debezium/README.md); look for the first `ERROR` line. |
+| Debezium image is stale after editing `infra/debezium/Dockerfile` | `docker compose -f infra/docker-compose.yml build debezium && npm run infra:up` |
 | Stale build output | `rm -rf apps/*/dist packages/*/dist && npm run build`. |
 
 ### macOS
