@@ -274,6 +274,29 @@ describe('CesiumAdapter', () => {
     expect(adapter.resolvePick(scene.pick(new Cartesian2(1, 1)))).toBeNull();
   });
 
+  it('locates an entity by id through the last frame (layer and drawn position)', () => {
+    const scene = new FakeScene();
+    const adapter = new CesiumAdapter(scene);
+    adapter.createLayer(LAYER, {});
+    adapter.createLayer('other', {});
+    const sdk = sdkLayer(LAYER);
+    sdk.store.applySnapshot(
+      mapSnapshot([
+        { id: 'a', lon: 1, lat: 2, alt: 3 },
+        { id: 'b', lon: 4, lat: 5 },
+      ]).snap,
+    );
+    sdk.send((f) => adapter.applyFrame(f));
+    expect(adapter.locate('a')).toEqual({ layerId: LAYER, lon: 1, lat: 2, alt: 3 });
+    expect(adapter.locate('a', 'other')).toBeNull();
+    expect(adapter.locate('nope')).toBeNull();
+
+    sdk.store.applyDelta(mapDelta([{ id: 'b', lon: 6, lat: 7 }], ['a']));
+    sdk.send((f) => adapter.applyFrame(f));
+    expect(adapter.locate('a')).toBeNull();
+    expect(adapter.locate('b', LAYER)).toEqual({ layerId: LAYER, lon: 6, lat: 7, alt: 0 });
+  });
+
   it('ignores layers that are not pickable and cleans up on destroy', () => {
     const scene = new FakeScene();
     const adapter = new CesiumAdapter(scene);

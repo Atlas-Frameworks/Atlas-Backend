@@ -110,5 +110,5 @@ are vertex-bound, not fill-bound.
   reused, IconLayer icon defs shared per code, `pick` through the slot table, picking only on
   pickable layers, `destroy`.
 
-Not done here (task deliverable 3): the runtime Cesium/deck.gl switch is a dev route in
-`apps/client`, wired in A-03.
+The runtime Cesium/deck.gl switch (task deliverable 3) is the `/dev/map-bench` route in
+`apps/client`, wired in A-03 (results in `apps/client/README.md`).

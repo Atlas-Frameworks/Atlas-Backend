@@ -3,7 +3,9 @@
   "version": "0.0.0",
   "scripts": {
     "ng": "ng",
+    "prestart": "node scripts/map-assets.mjs",
     "start": "ng serve",
+    "prebuild": "node scripts/map-assets.mjs",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
     "test": "ng test --watch=false",
@@ -19,7 +21,11 @@
     "@angular/platform-browser": "^22.2.0",
     "@angular/router": "^22.2.0",
     "@atlas/client-sdk": "*",
+    "@atlas/map-cesium": "*",
+    "@atlas/map-deckgl": "*",
     "@atlas/protocol": "*",
+    "cesium": "1.146.0",
+    "maplibre-gl": "^6.15.0",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0"
   },

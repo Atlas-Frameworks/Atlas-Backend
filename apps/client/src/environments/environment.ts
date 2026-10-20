@@ -8,4 +8,7 @@ export const environment: AtlasEnvironment = {
   services: { '*': 'ws://127.0.0.1:8090/ws' },
   devApiUrl: 'http://127.0.0.1:8090',
   registryUrl: 'http://127.0.0.1:8090/meta/registry',
+  // Offline default: a plain globe with a grid. For the on-prem basemap set `url` to its XYZ
+  // template, e.g. 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' with credit '© OpenStreetMap'.
+  basemap: { url: null, baseColor: '#16324a' },
 };

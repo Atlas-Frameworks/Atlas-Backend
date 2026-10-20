@@ -16,3 +16,5 @@ package-lock.json
 deploy/**/templates/
 deploy/schemas/
 deploy/.rendered/
+
+apps/client/.map-assets/

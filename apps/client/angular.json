@@ -27,10 +27,24 @@
               {
                 "glob": "**/*",
                 "input": "public"
+              },
+              {
+                "glob": "**/*",
+                "input": ".map-assets"
               }
             ],
             "styles": ["src/styles.scss"],
-            "conditions": ["@atlas/source", "module"]
+            "conditions": ["@atlas/source", "module"],
+            "allowedCommonJsDependencies": [
+              "mersenne-twister",
+              "urijs",
+              "protobufjs",
+              "lerc",
+              "bitmap-sdf",
+              "grapheme-splitter",
+              "nosleep.js",
+              "earcut"
+            ]
           },
           "configurations": {
             "production": {
@@ -62,7 +76,12 @@
           "builder": "@angular/build:dev-server",
           "options": {
             "prebundle": {
-              "exclude": ["@atlas/client-sdk", "@atlas/protocol"]
+              "exclude": [
+                "@atlas/client-sdk",
+                "@atlas/protocol",
+                "@atlas/map-cesium",
+                "@atlas/map-deckgl"
+              ]
             }
           },
           "configurations": {

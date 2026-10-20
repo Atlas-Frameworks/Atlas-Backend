@@ -3,6 +3,7 @@ import { provideRouter, Router } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { routes } from './app.routes';
 import { AuthStore } from './auth/auth.store';
+import { MAP_ENGINE_FACTORY } from './map/map-engine';
 import { ATLAS_CLIENT_FACTORY } from './realtime/atlas-client-factory';
 import { FakeAtlasClient, IDLE } from './realtime/fake-atlas-client';
 
@@ -14,6 +15,8 @@ describe('routes', () => {
     TestBed.configureTestingModule({
       providers: [
         provideRouter(routes),
+        // No WebGL in jsdom: the map never finishes loading here.
+        { provide: MAP_ENGINE_FACTORY, useValue: () => new Promise(() => undefined) },
         {
           provide: ATLAS_CLIENT_FACTORY,
           useValue: (config: FakeAtlasClient['config']) => {
@@ -60,7 +63,7 @@ describe('routes', () => {
     expect(el?.querySelector('app-connection-status')?.textContent?.trim()).toBe('Reconnecting…');
   });
 
-  it('serves the map bench placeholder without a token', async () => {
+  it('serves the map bench without a token', async () => {
     const harness = await RouterTestingHarness.create();
     await harness.navigateByUrl('/dev/map-bench');
     expect(TestBed.inject(Router).url).toBe('/dev/map-bench');

@@ -13,6 +13,8 @@
     "experimentalDecorators": true,
     "importHelpers": true,
     "target": "ES2022",
+    // The workspace packages use ES2023 library calls (toSorted); evergreen browsers have them.
+    "lib": ["ES2023", "DOM"],
     "module": "preserve",
     "moduleResolution": "bundler",
     // Resolve @atlas/* workspace packages to their TypeScript sources, like the Angular builder

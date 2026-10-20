@@ -14,6 +14,7 @@
  * `window.bench` exposes the numbers for scripted runs: `await bench.measure(10)`.
  */
 import { createAtlasClient } from '@atlas/client-sdk';
+import { SyntheticFrames } from '@atlas/client-sdk/testing';
 import type { LayerStyle, MapFrame } from '@atlas/client-sdk';
 import {
   Cartesian3,
@@ -222,82 +223,34 @@ canvas.addEventListener('click', (ev) => {
 let latest: MapFrame | null = null;
 
 /**
- * Local generator: N entities moving on great-circle-ish headings, UPS position updates per
- * second spread over HZ frames, CHURN of them removals (a new entity takes the freed slot in
- * the following frame, like the SDK's slot reuse rule). The first 200 slots are labelled.
+ * Local generator (`SyntheticFrames` from `@atlas/client-sdk/testing`): N entities, UPS position
+ * updates per second spread over HZ frames, CHURN of them removals (a new entity takes the freed
+ * slot in the following frame, like the SDK's slot reuse rule). The first 200 slots are labelled.
  */
 class Synthetic {
-  readonly frame: MapFrame;
-  private readonly heading: Float32Array;
-  private readonly free: number[] = [];
-  private readonly freedThisFrame: number[] = [];
-  private nextId = 0;
-  private budget = 0;
+  private readonly source = new SyntheticFrames({
+    layerId: LAYER,
+    entities: N,
+    updatesPerSecond: UPS,
+    churn: CHURN,
+  });
   private lastSend = performance.now();
-
-  constructor(n: number) {
-    this.frame = {
-      layerId: LAYER,
-      count: n,
-      ids: Array.from({ length: n }, () => ''),
-      positions: new Float64Array(n * 3),
-      icons: new Uint16Array(n),
-      visible: new Uint8Array(n),
-      labels: new Map(),
-    };
-    this.heading = new Float32Array(n);
-    for (let slot = 0; slot < n; slot++) this.spawn(slot);
-  }
-
-  private spawn(slot: number): void {
-    const f = this.frame;
-    const id = `plane-${this.nextId++}`;
-    f.ids[slot] = id;
-    f.positions[slot * 3] = Math.random() * 360 - 180;
-    f.positions[slot * 3 + 1] = Math.asin(Math.random() * 2 - 1) * (180 / Math.PI) * 0.95;
-    f.positions[slot * 3 + 2] = 10_000;
-    f.icons[slot] = Math.random() < 0.8 ? 0 : 1;
-    f.visible[slot] = 1;
-    this.heading[slot] = Math.random() * Math.PI * 2;
-    if (slot < 200) f.labels.set(slot, id);
-  }
 
   /** Called before every render; sends a frame when one is due. */
   tick(now: number): void {
     if (now - this.lastSend < 1000 / HZ - 0.5) return;
-    this.budget = Math.min(UPS, this.budget + (UPS * (now - this.lastSend)) / 1000);
+    this.source.step(now - this.lastSend);
     this.lastSend = now;
-    const f = this.frame;
-    // Slots freed in the previous frame may now be reused.
-    for (const slot of this.free) this.spawn(slot);
-    this.free.length = 0;
-    for (; this.budget >= 1; this.budget--) {
-      const slot = (Math.random() * f.count) | 0;
-      if (f.visible[slot] !== 1) continue;
-      if (Math.random() < CHURN) {
-        f.visible[slot] = 0;
-        f.ids[slot] = '';
-        f.labels.delete(slot);
-        this.freedThisFrame.push(slot);
-        continue;
-      }
-      const h = this.heading[slot]!;
-      const p = slot * 3;
-      f.positions[p] = ((f.positions[p]! + 0.05 * Math.sin(h) + 540) % 360) - 180;
-      f.positions[p + 1] = Math.max(-85, Math.min(85, f.positions[p + 1]! + 0.05 * Math.cos(h)));
-    }
-    for (const slot of this.freedThisFrame) this.free.push(slot);
-    this.freedThisFrame.length = 0;
     this.sendNow();
   }
 
   sendNow(): void {
-    latest = this.frame;
-    timedApply(this.frame);
+    latest = this.source.frame;
+    timedApply(this.source.frame);
   }
 }
 
-const synthetic = new Synthetic(N);
+const synthetic = new Synthetic();
 let frozen = false;
 
 if (SOURCE === 'synthetic') {

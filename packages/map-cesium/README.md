@@ -33,6 +33,7 @@ class CesiumAdapter implements MapAdapter {
   applyFrame(frame: MapFrame): void;                     // unknown layerId: created with default style
   pick(screenX: number, screenY: number): string | null; // CSS pixels relative to the canvas
   resolvePick(picked: unknown): string | null;           // a scene.pick result -> entity id
+  locate(id: string, layerId?: string): EntityLocation | null; // layer + last drawn lon/lat/alt
   readonly stats: { layerId; count; moved; toggled; labels }; // last applyFrame, updated in place
   destroy(): void;
 }
@@ -159,8 +160,9 @@ What the numbers say:
 
 ## Not done here
 
-- The dev route `/dev/map-bench` in `apps/client` (C-05 deliverable 3) is wired in A-03. Until then
-  this package's `bench/` page is the benchmark.
+- The dev route `/dev/map-bench` in `apps/client` (C-05 deliverable 3) was wired in A-03 (results
+  in `apps/client/README.md`). The synthetic source is `SyntheticFrames` from
+  `@atlas/client-sdk/testing`, shared by this `bench/` page and the app.
 - `BufferPointCollection` requires `SceneMode.SCENE3D` (Cesium logs a warning otherwise). Use
   `points: 'primitive'` for 2D or Columbus view.
 - No smooth motion between frames (C-02 decision: no interpolation in the POC).

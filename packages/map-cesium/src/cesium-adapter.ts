@@ -46,6 +46,14 @@ export interface CesiumAdapterOptions {
   points?: PointCollectionKind;
 }
 
+/** Where an entity was last drawn (see {@link CesiumAdapter.locate}). */
+export interface EntityLocation {
+  layerId: string;
+  lon: number;
+  lat: number;
+  alt: number;
+}
+
 /** Counters for the last `applyFrame` (one object, updated in place). */
 export interface ApplyFrameStats {
   layerId: string;
@@ -240,6 +248,23 @@ export class CesiumAdapter implements MapAdapter {
       if (slot < 0) continue;
       if (slot >= layer.count || layer.shown[slot] !== 1) return null;
       return layer.ids[slot] || null;
+    }
+    return null;
+  }
+
+  /**
+   * The layer and last drawn position of a shown entity, looked up through the slot table of the
+   * last applied frame (in `layerId` only, if given). A linear scan: for clicks and fly-to, not
+   * per frame.
+   */
+  locate(id: string, layerId?: string): EntityLocation | null {
+    if (this.destroyed || id === '') return null;
+    for (const layer of this.layers.values()) {
+      if (layerId !== undefined && layer.id !== layerId) continue;
+      const slot = layer.ids.indexOf(id);
+      if (slot < 0 || layer.shown[slot] !== 1) continue;
+      const d = layer.drawn;
+      return { layerId: layer.id, lon: d[slot * 3]!, lat: d[slot * 3 + 1]!, alt: d[slot * 3 + 2]! };
     }
     return null;
   }
