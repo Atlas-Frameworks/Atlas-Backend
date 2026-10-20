@@ -1,0 +1,99 @@
+# Local POC infrastructure. Starter configuration: tasks I-01..I-04 verify and finish it.
+# Start:  npm run infra:up      Stop and wipe: npm run infra:down
+name: atlas-realtime
+
+x-redis-image: &redis-image redis:7.4
+
+services:
+  # ---------- Postgres 17: primary + streaming read replica (task I-01) ----------
+  postgres-primary:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: atlas
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+      - -c
+      - max_slot_wal_keep_size=4GB
+      - -c
+      - hot_standby_feedback=on
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+    ports: ["5432:5432"]
+    volumes:
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      - pg-primary:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d atlas"]
+      interval: 5s
+      retries: 20
+
+  postgres-replica:
+    image: postgres:17
+    environment:
+      PGPASSWORD: replicator
+    entrypoint: ["/bin/bash", "/replica/entrypoint.sh"]
+    ports: ["5433:5432"]
+    volumes:
+      - ./postgres/replica:/replica:ro
+      - pg-replica:/var/lib/postgresql/data
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+
+  # ---------- Redis: primary + replica + 3 Sentinels + master-only proxy (task I-02) ----------
+  # Each node copies its config to a writable path, because Sentinel rewrites node configs on failover.
+  redis-primary:
+    image: *redis-image
+    entrypoint: ["/bin/sh", "-c", "cp /config/redis.conf /data/redis.conf && exec redis-server /data/redis.conf"]
+    volumes:
+      - ./redis/redis.conf:/config/redis.conf:ro
+    ports: ["6379:6379"]
+
+  redis-replica:
+    image: *redis-image
+    entrypoint: ["/bin/sh", "-c", "cp /config/redis.conf /data/redis.conf && exec redis-server /data/redis.conf --replicaof redis-primary 6379"]
+    volumes:
+      - ./redis/redis.conf:/config/redis.conf:ro
+    depends_on: [redis-primary]
+
+  sentinel-1: &sentinel
+    image: *redis-image
+    entrypoint: ["/bin/sh", "-c", "cp /config/sentinel.conf /tmp/sentinel.conf && exec redis-sentinel /tmp/sentinel.conf"]
+    volumes:
+      - ./redis/sentinel.conf:/config/sentinel.conf:ro
+    depends_on: [redis-primary, redis-replica]
+  sentinel-2: *sentinel
+  sentinel-3: *sentinel
+
+  # Debezium's Redis sink has no Sentinel support, so it connects through this proxy,
+  # which only ever routes to the node that currently reports role:master.
+  redis-proxy:
+    image: haproxy:3.2
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports: ["6380:6380", "8404:8404"]
+    depends_on: [redis-primary, redis-replica]
+
+  # ---------- Debezium Server: outbox -> Redis Streams (task I-03) ----------
+  debezium:
+    image: quay.io/debezium/server:3.7.0.Final
+    volumes:
+      - ./debezium/application.properties:/debezium/config/application.properties:ro
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-proxy:
+        condition: service_started
+    ports: ["8080:8080"]
+
+volumes:
+  pg-primary:
+  pg-replica:

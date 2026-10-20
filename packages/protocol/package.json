@@ -1,0 +1,22 @@
+{
+  "name": "@atlas/protocol",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Protobuf schema and generated TypeScript types shared by client, view service and replicator. See docs/tasks/03-protocol.md.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2"
+  }
+}
