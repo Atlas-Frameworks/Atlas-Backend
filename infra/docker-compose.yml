@@ -174,7 +174,11 @@ services:
         condition: service_healthy
       redis-proxy:
         condition: service_started
-    ports: ["8080:8080"]
+    environment:
+      # The image's run.sh loads the Prometheus JMX exporter agent when this is set (task I-05).
+      # Debezium Server 3.7 has no Quarkus /q/metrics endpoint. Rules: /debezium/config/metrics.yml.
+      JMX_EXPORTER_PORT: "9404"
+    ports: ["8080:8080", "9404:9404"]
     # Watchdog. When the Redis master is demoted mid-write, the Redis sink fails its engine
     # (JedisDataException "UNBLOCKED ... master -> replica") but the JVM keeps running, so
     # `restart:` never fires. This check does what an OpenShift liveness probe on /q/health/live
@@ -192,6 +196,68 @@ services:
       timeout: 5s
       retries: 3
 
+  # ---------- Monitoring: Prometheus, Grafana and exporters (task I-05, see monitoring/README.md) ----------
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.94.0
+    environment:
+      # Multi-target: Prometheus passes each node as ?target=, so no default address.
+      REDIS_ADDR: ""
+      REDIS_EXPORTER_CHECK_STREAMS: "changes:*"
+      # Membership entries (<svc>:workers:<name>, contracts §2), for the worker-list alert.
+      REDIS_EXPORTER_COUNT_KEYS: "db0=*:workers:view-service-*"
+    depends_on: [redis-primary, redis-replica]
+
+  postgres-exporter-primary: &postgres-exporter
+    image: prometheuscommunity/postgres-exporter:v0.20.1
+    command: ["--extend.query-path=/config/queries.yml"]
+    environment:
+      # Local dev only: the superuser. A real deployment uses a role with pg_monitor.
+      DATA_SOURCE_NAME: "postgresql://postgres:postgres@postgres-primary:5432/atlas?sslmode=disable"
+    volumes:
+      - ./monitoring/postgres-exporter/queries.yml:/config/queries.yml:ro
+    depends_on: [postgres-primary]
+
+  postgres-exporter-replica:
+    <<: *postgres-exporter
+    environment:
+      DATA_SOURCE_NAME: "postgresql://postgres:postgres@postgres-replica:5432/atlas?sslmode=disable"
+    depends_on: [postgres-replica]
+
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    # Workers and replicator-sim run on the host in local dev. Docker Desktop resolves this name
+    # already; the mapping makes it work on Linux Docker Engine too.
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:13.2.4
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/atlas-realtime.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on: [prometheus]
+    ports: ["3001:3000"]
+
 volumes:
   pg-primary:
   pg-replica:
+  prometheus-data:
+  grafana-data:

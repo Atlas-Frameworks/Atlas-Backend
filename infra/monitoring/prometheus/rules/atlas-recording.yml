@@ -1,0 +1,36 @@
+# Recording rules (task I-05). The dashboard and the alerts both use these, so they agree.
+# Worker metrics (atlas_*) are PENDING S-09; until workers serve /metrics these series are empty.
+groups:
+  - name: atlas-recording
+    rules:
+      # Commit-to-send delay across all workers (contracts §8, histogram).
+      - record: atlas:commit_to_send_seconds:p50
+        expr: histogram_quantile(0.50, sum by (le) (rate(atlas_commit_to_send_seconds_bucket[1m])))
+      - record: atlas:commit_to_send_seconds:p99
+        expr: histogram_quantile(0.99, sum by (le) (rate(atlas_commit_to_send_seconds_bucket[1m])))
+
+      # ASSUMPTION (pending S-09): atlas_tick_duration_seconds is a histogram.
+      - record: worker:atlas_tick_duration_seconds:p99
+        expr: histogram_quantile(0.99, sum by (worker, le) (rate(atlas_tick_duration_seconds_bucket[1m])))
+
+      # ASSUMPTION (pending S-09): the contract has no tick-interval metric. Use
+      # atlas_tick_interval_seconds if a worker exports it, else TICK_MS's default of 1 s for every
+      # worker target Prometheus knows about.
+      - record: worker:atlas_tick_interval_seconds
+        expr: |
+          max by (worker) (atlas_tick_interval_seconds)
+          or
+          0 * max by (worker) (up{job="view-service"}) + 1
+      - record: worker:atlas_tick_duration_over_interval:ratio
+        expr: worker:atlas_tick_duration_seconds:p99 / on (worker) worker:atlas_tick_interval_seconds
+
+      # S-09 exports event-loop delay (monitorEventLoopDelay) as a histogram.
+      - record: worker:atlas_event_loop_delay_seconds:p99
+        expr: histogram_quantile(0.99, sum by (worker, le) (rate(atlas_event_loop_delay_seconds_bucket[1m])))
+
+      # Replica lag: the primary's time-based view, falling back to the replica's own.
+      - record: atlas:pg_replica_lag_seconds
+        expr: |
+          max(atlas_pg_standby_replay_lag_seconds)
+          or
+          max(atlas_pg_replica_replay_delay_seconds)

@@ -8,7 +8,7 @@ How to run the whole POC on one machine. For the design, see [architecture-plan.
 | --- | --- | --- |
 | Node.js | 24 (≥ 24.15) | `nvm use` reads `.nvmrc`. Angular 22 needs ≥ 24.15. `npm ci` refuses older versions (`engine-strict`). |
 | npm | 11 | Pinned in `package.json` `packageManager`. Upgrade with `npm install -g npm@11`. |
-| Docker | Docker Desktop 4.x, or Docker Engine + Compose v2 | Give it at least 6 GB of memory: Postgres ×2, Redis ×2, 3 Sentinels, HAProxy and Debezium (a JVM). |
+| Docker | Docker Desktop 4.x, or Docker Engine + Compose v2 | Give it at least 6 GB of memory: Postgres ×2, Redis ×2, 3 Sentinels, HAProxy, Debezium (a JVM), Prometheus, Grafana and 3 exporters. |
 
 ## First run
 
@@ -30,7 +30,7 @@ curl localhost:3000 && curl localhost:3010 && curl localhost:3020   # the 3 work
 open http://localhost:4200                       # the client
 ```
 
-Until the end-to-end tasks land (S-04, C-05, A-03, W-03), the expected end state is: infra up, three workers answering, client served. Afterwards it is: the client shows the map with moving points.
+Until the end-to-end tasks land (S-04, C-05, A-03, W-03), the expected end state is: infra up, three workers answering, client served, Grafana on http://localhost:3001 with infrastructure panels filled (worker panels fill once S-09 lands). Afterwards it is: the client shows the map with moving points.
 
 ## Startup order
 
@@ -92,7 +92,9 @@ Each Node app validates its environment at startup (`src/config.ts`, using `@atl
 | 6380 | Redis master-only proxy (HAProxy) | `redis://localhost:6380`, always the current master |
 | 8404 | HAProxy stats | http://localhost:8404/stats |
 | 8080 | Debezium Server | Health: http://localhost:8080/q/health |
-| 3001 / 9090 | Grafana / Prometheus | Added by I-05 |
+| 9404 | Debezium Prometheus metrics (JMX exporter) | http://localhost:9404/metrics |
+| 3001 | Grafana | http://localhost:3001, dashboard "Atlas realtime" (see [infra/monitoring/README.md](../infra/monitoring/README.md)) |
+| 9090 | Prometheus | http://localhost:9090, alerts at `/alerts` |
 
 ## Resetting data
 

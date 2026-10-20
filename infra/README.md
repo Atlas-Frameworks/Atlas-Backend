@@ -9,7 +9,11 @@ Starter `docker-compose.yml` for the POC. It has **not** been started yet in CI.
 | `redis-primary` / `redis-replica` | – (not published) | Redis Streams (`changes:<type>`), worker lists. Use the proxy | I-02 |
 | `sentinel-1..3` | – | Redis failover | I-02 |
 | `redis-proxy` | 6380, stats 8404 | Master-only endpoint for Debezium and local apps (see [redis/README.md](redis/README.md)) | I-02 |
-| `debezium` | 8080 (health at `/q/health`) | Outbox → Redis Streams | I-03 |
+| `debezium` | 8080 (health at `/q/health`), JMX metrics 9404 | Outbox → Redis Streams | I-03 |
+| `prometheus` | 9090 | Scrapes workers, replicator, Debezium, Redis, Postgres; alert rules (see [monitoring/README.md](monitoring/README.md)) | I-05 |
+| `grafana` | 3001 | Dashboard "Atlas realtime", anonymous viewer access | I-05 |
+| `redis-exporter` | – | Redis metrics, both nodes | I-05 |
+| `postgres-exporter-primary` / `-replica` | – | Postgres metrics, slot and replica lag | I-05 |
 
 ```bash
 npm run infra:up     # start everything
