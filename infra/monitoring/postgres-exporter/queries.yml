@@ -1,0 +1,132 @@
+# Custom postgres_exporter queries (task I-05). Loaded with --extend.query-path.
+# The same file is used for the primary and the replica exporter. Each query guards itself with
+# pg_is_in_recovery(), so it returns rows only on the node where it makes sense, and keeps
+# working after a failover swaps the roles (watch pg_replication_is_replica for the role).
+# Metric name = <query name>_<column>.
+
+# Replication slots, read on the primary. lag_bytes is the change log the slot's consumer has not
+# confirmed yet (for Debezium's logical slot: pg_current_wal_lsn() - confirmed_flush_lsn).
+# retained_bytes is the WAL kept on disk for the slot (from restart_lsn).
+atlas_pg_replication_slot:
+  query: |
+    SELECT slot_name,
+           slot_type,
+           COALESCE(wal_status, 'unknown') AS wal_status,
+           active::int AS active,
+           pg_wal_lsn_diff(pg_current_wal_lsn(), COALESCE(confirmed_flush_lsn, restart_lsn)) AS lag_bytes,
+           pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn) AS retained_bytes,
+           COALESCE(safe_wal_size, 0) AS safe_wal_size_bytes
+    FROM pg_replication_slots
+    WHERE NOT pg_is_in_recovery() AND restart_lsn IS NOT NULL
+  master: true
+  metrics:
+    - slot_name:
+        usage: "LABEL"
+        description: "Replication slot name"
+    - slot_type:
+        usage: "LABEL"
+        description: "physical or logical"
+    - wal_status:
+        usage: "LABEL"
+        description: "reserved, extended, unreserved or lost"
+    - active:
+        usage: "GAUGE"
+        description: "1 if a consumer is connected to the slot"
+    - lag_bytes:
+        usage: "GAUGE"
+        description: "Bytes of WAL between the current position and the slot's confirmed position"
+    - retained_bytes:
+        usage: "GAUGE"
+        description: "Bytes of WAL the slot keeps on disk (current position minus restart_lsn)"
+    - safe_wal_size_bytes:
+        usage: "GAUGE"
+        description: "Bytes that can still be written before the slot is invalidated by max_slot_wal_keep_size"
+
+# Streaming standbys as the primary sees them (physical slots only, so Debezium's logical
+# walsender is excluded). replay_lag is time-based and accurate even with little write traffic.
+atlas_pg_standby:
+  query: |
+    SELECT s.slot_name,
+           r.application_name,
+           COALESCE(EXTRACT(EPOCH FROM r.replay_lag), 0) AS replay_lag_seconds,
+           COALESCE(EXTRACT(EPOCH FROM r.flush_lag), 0) AS flush_lag_seconds,
+           COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), r.replay_lsn), 0) AS replay_lag_bytes
+    FROM pg_stat_replication r
+    JOIN pg_replication_slots s ON s.active_pid = r.pid
+    WHERE NOT pg_is_in_recovery() AND s.slot_type = 'physical'
+  master: true
+  metrics:
+    - slot_name:
+        usage: "LABEL"
+        description: "Physical slot used by the standby"
+    - application_name:
+        usage: "LABEL"
+        description: "Standby application_name"
+    - replay_lag_seconds:
+        usage: "GAUGE"
+        description: "Time between a commit on the primary and its replay on the standby"
+    - flush_lag_seconds:
+        usage: "GAUGE"
+        description: "Time between a commit on the primary and its flush on the standby"
+    - replay_lag_bytes:
+        usage: "GAUGE"
+        description: "Bytes of WAL the standby has not replayed yet"
+
+# The replica's own view: how far replay is behind what it has received.
+atlas_pg_replica:
+  query: |
+    SELECT CASE
+             WHEN pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() THEN 0
+             ELSE COALESCE(EXTRACT(EPOCH FROM now() - pg_last_xact_replay_timestamp()), 0)
+           END AS replay_delay_seconds,
+           COALESCE(pg_wal_lsn_diff(pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn()), 0) AS replay_backlog_bytes
+    WHERE pg_is_in_recovery()
+  master: true
+  metrics:
+    - replay_delay_seconds:
+        usage: "GAUGE"
+        description: "Seconds since the last replayed transaction, 0 when replay has caught up with receive"
+    - replay_backlog_bytes:
+        usage: "GAUGE"
+        description: "Bytes received but not yet replayed"
+
+# Queries cancelled on a hot standby because of recovery conflicts (always 0 on a primary).
+atlas_pg_conflicts:
+  query: |
+    SELECT datname,
+           confl_tablespace,
+           confl_lock,
+           confl_snapshot,
+           confl_bufferpin,
+           confl_deadlock,
+           confl_active_logicalslot,
+           confl_tablespace + confl_lock + confl_snapshot + confl_bufferpin + confl_deadlock
+             + confl_active_logicalslot AS confl_total
+    FROM pg_stat_database_conflicts
+    WHERE datname NOT LIKE 'template%'
+  master: true
+  metrics:
+    - datname:
+        usage: "LABEL"
+        description: "Database"
+    - confl_tablespace:
+        usage: "COUNTER"
+        description: "Queries cancelled because of dropped tablespaces"
+    - confl_lock:
+        usage: "COUNTER"
+        description: "Queries cancelled because of lock timeouts"
+    - confl_snapshot:
+        usage: "COUNTER"
+        description: "Queries cancelled because of old snapshots"
+    - confl_bufferpin:
+        usage: "COUNTER"
+        description: "Queries cancelled because of pinned buffers"
+    - confl_deadlock:
+        usage: "COUNTER"
+        description: "Queries cancelled because of deadlocks"
+    - confl_active_logicalslot:
+        usage: "COUNTER"
+        description: "Uses of logical slots cancelled because of old snapshots or wal_level too low"
+    - confl_total:
+        usage: "COUNTER"
+        description: "All queries cancelled because of recovery conflicts (sum of the columns above)"

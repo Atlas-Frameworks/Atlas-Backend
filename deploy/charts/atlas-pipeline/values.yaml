@@ -1,0 +1,123 @@
+# Write path: docs/architecture-plan.md, "Write path" items 4-7.
+
+imagePullSecrets: []
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+debezium:
+  enabled: true
+  image:
+    # Must be built from infra/debezium/Dockerfile: quay.io/debezium/server:3.7.0.Final plus
+    # /debezium/lib_opt/debezium-connect-plugins-3.7.0.Final.jar copied into /debezium/lib/,
+    # because the Outbox EventRouter is not on the stock image's classpath.
+    repository: image-registry.openshift-image-registry.svc:5000/atlas/debezium-server
+    tag: 3.7.0.Final-atlas
+    pullPolicy: IfNotPresent
+
+  # Patroni primary Service (follows the leader on failover). Debezium must never point at a
+  # replica: the replication slot lives on the primary.
+  database:
+    host: atlas-postgres
+    port: 5432
+    name: atlas
+    user: debezium
+    # Secret holding the debezium role's password, exposed as ATLAS_DB_PASSWORD and referenced
+    # from application.properties as ${ATLAS_DB_PASSWORD}. Create it outside the chart.
+    passwordSecret:
+      name: atlas-debezium-db
+      key: password
+
+  # Debezium's Redis sink has no Sentinel support: point it at the master-only proxy (I-02).
+  redis:
+    address: redis-proxy:6380
+
+  # Flush interval of the JDBC offset store (plan: 1-5 s).
+  offsetFlushIntervalMs: 2000
+  heartbeatIntervalMs: 10000
+  logLevel: INFO
+  # One JSON object per log line in the cluster.
+  logJson: true
+
+  # Extra application.properties lines appended verbatim (map of key: value).
+  extraProperties: {}
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+  javaOpts: "-XX:MaxRAMPercentage=75"
+
+  # Generous: lets Debezium flush its offset and close the replication connection, so the next
+  # pod (Recreate) can take the slot without waiting for Postgres to notice a dead walsender.
+  terminationGracePeriodSeconds: 120
+
+  # Debezium Server (Quarkus) health on port 8080. Liveness matters: when the Redis master is
+  # demoted the Redis sink fails the engine (JedisDataException "UNBLOCKED force unblock") but
+  # the JVM keeps running, so nothing restarts it unless liveness (DOWN in that state) does.
+  probes:
+    startup:
+      httpGet:
+        path: /q/health/live
+        port: http
+      periodSeconds: 5
+      failureThreshold: 24
+      timeoutSeconds: 3
+    liveness:
+      httpGet:
+        path: /q/health/live
+        port: http
+      periodSeconds: 10
+      failureThreshold: 3
+      timeoutSeconds: 3
+    readiness:
+      httpGet:
+        path: /q/health/ready
+        port: http
+      periodSeconds: 10
+      failureThreshold: 3
+      timeoutSeconds: 3
+
+replicatorSim:
+  enabled: true
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/atlas/replicator-sim
+    tag: ""
+    pullPolicy: IfNotPresent
+  replicas: 1
+  port: 3100
+  nodeEnv: production
+  logLevel: info
+  # Plain environment variables (map of NAME: value).
+  env: {}
+  # Secret loaded with envFrom (e.g. the replicator's database URL). Empty = none.
+  envFromSecret: ""
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  # ASSUMPTION: replicator-sim has no health endpoint yet (still the Nest starter), so the
+  # default probes only check the port is open. Switch to httpGet once R-tasks add one.
+  probes:
+    liveness:
+      tcpSocket:
+        port: http
+      periodSeconds: 10
+      failureThreshold: 3
+    readiness:
+      tcpSocket:
+        port: http
+      periodSeconds: 5
+      failureThreshold: 3

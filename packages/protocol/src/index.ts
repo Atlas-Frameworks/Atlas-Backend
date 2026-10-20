@@ -10,3 +10,9 @@
  * Every component must accept PROTOCOL_VERSION and PROTOCOL_VERSION - 1.
  */
 export const PROTOCOL_VERSION = 1;
+
+// P-01: client <-> worker protobuf schema and helpers (browser-safe).
+// Worker <-> worker gRPC types live in the '@atlas/protocol/cluster' entry point.
+export * from './gen/atlas/client/v1/client_pb.js';
+export * from './codec.js';
+export * from './positions.js';

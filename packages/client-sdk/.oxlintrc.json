@@ -1,0 +1,32 @@
+{
+  "$schema": "../../node_modules/oxlint/configuration_schema.json",
+  "extends": ["../../.oxlintrc.json"],
+  "env": { "browser": true, "worker": true },
+  "rules": {
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": [
+              "@angular/*",
+              "react",
+              "react-dom",
+              "react/*",
+              "cesium",
+              "@cesium/*",
+              "deck.gl",
+              "@deck.gl/*",
+              "maplibre-gl"
+            ],
+            "message": "client-sdk must not import UI frameworks or map libraries (AGENTS.md)."
+          },
+          {
+            "group": ["@atlas/view-service", "@atlas/replicator-sim", "@atlas/client"],
+            "message": "Packages never depend on apps."
+          }
+        ]
+      }
+    ]
+  }
+}

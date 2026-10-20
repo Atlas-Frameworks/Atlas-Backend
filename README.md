@@ -31,7 +31,8 @@ flowchart LR
 | `packages/view-engine` | Pure TS: registry, SQL compiler, dependency index, store, tick, hashing | E-01 – E-07 |
 | `packages/client-sdk` | Browser SDK running in a Web Worker, map adapter interface | C-01 – C-07 |
 | `infra/` | docker-compose: Postgres, Redis + Sentinel + proxy, Debezium | I-01 – I-05 |
-| `docs/` | Plan, contracts, tasks | |
+| `scripts/` | Dev launcher (`dev:*` scripts) | F-02 |
+| `docs/` | Plan, contracts, tasks, local development guide | |
 
 ## Getting started
 
@@ -41,7 +42,10 @@ Requirements: Node 24 (`.nvmrc`), npm 11, Docker.
 npm ci
 npm run build
 npm test
-npm run infra:up        # Postgres, Redis, Debezium (see infra/README.md)
+npm run dev:infra       # Postgres, Redis, Debezium (see infra/README.md)
+npm run dev:cluster     # 3 view-service workers
+npm run dev:replicator  # replicator-sim
+npm run dev:client      # Angular app on http://localhost:4200
 ```
 
-App-level dev commands arrive with task F-02.
+Full walkthrough, ports, data reset and troubleshooting: [docs/development.md](docs/development.md).

@@ -1,0 +1,79 @@
+{{- if .Values.replicatorSim.enabled }}
+{{- $r := .Values.replicatorSim }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "atlas-pipeline.replicator.name" . }}
+  labels:
+    {{- include "atlas-pipeline.labels" . | nindent 4 }}
+    {{- include "atlas-pipeline.replicator.selector" . | nindent 4 }}
+    app.kubernetes.io/component: replicator
+spec:
+  replicas: {{ $r.replicas }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "atlas-pipeline.replicator.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "atlas-pipeline.labels" . | nindent 8 }}
+        {{- include "atlas-pipeline.replicator.selector" . | nindent 8 }}
+        app.kubernetes.io/component: replicator
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: replicator-sim
+          image: {{ printf "%s:%s" $r.image.repository (default .Chart.AppVersion $r.image.tag) }}
+          imagePullPolicy: {{ $r.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $r.port }}
+              protocol: TCP
+          env:
+            - name: PORT
+              value: {{ $r.port | quote }}
+            - name: NODE_ENV
+              value: {{ $r.nodeEnv | quote }}
+            - name: LOG_LEVEL
+              value: {{ $r.logLevel | quote }}
+            {{- range $name, $value := $r.env }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+          {{- with $r.envFromSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ . }}
+          {{- end }}
+          resources:
+            {{- toYaml $r.resources | nindent 12 }}
+          livenessProbe:
+            {{- toYaml $r.probes.liveness | nindent 12 }}
+          readinessProbe:
+            {{- toYaml $r.probes.readiness | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "atlas-pipeline.replicator.name" . }}
+  labels:
+    {{- include "atlas-pipeline.labels" . | nindent 4 }}
+    {{- include "atlas-pipeline.replicator.selector" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "atlas-pipeline.replicator.selector" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $r.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

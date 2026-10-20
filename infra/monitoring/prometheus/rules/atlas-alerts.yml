@@ -1,0 +1,222 @@
+# Alert rules from docs/architecture-plan.md, "Observability and capacity" (task I-05).
+# Each rule's `plan_row` annotation names the table row it implements. Rows with no metric in
+# contracts §8 yet are listed in infra/monitoring/README.md ("Not covered yet").
+# Worker metrics (atlas_*) are PENDING S-09. Thresholds marked ASSUMPTION need confirming there.
+groups:
+  - name: atlas-pipeline
+    rules:
+      - alert: AtlasCommitToSendP99High
+        expr: atlas:commit_to_send_seconds:p99 > 3
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          plan_row: "Commit-to-send delay, p50 and p99"
+          summary: "Commit-to-send p99 is {{ $value | humanizeDuration }} (target under 3 s)"
+          description: "End-to-end delay from commit to the delta leaving a worker is over target."
+
+      - alert: AtlasReconcileDrift
+        expr: sum by (worker) (increase(atlas_reconcile_mismatches_total[5m])) > 0
+        labels: { severity: critical }
+        annotations:
+          plan_row: "Reconciliation drift count"
+          summary: "Reconciliation found {{ $value }} mismatches on {{ $labels.worker }}"
+          description: "A periodic full query disagreed with a view held in memory. Any drift is a bug."
+
+      - alert: AtlasDebeziumSlotLagBytes
+        expr: max by (slot_name) (atlas_pg_replication_slot_lag_bytes{slot_type="logical"}) > 1073741824
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          plan_row: "Replication slot lag (change log Debezium hasn't read yet)"
+          summary: "Slot {{ $labels.slot_name }} is {{ $value | humanize1024 }}B behind (limit 1 GiB)"
+          description: "pg_current_wal_lsn() - confirmed_flush_lsn on the primary. Debezium is stalled or slow."
+
+      - alert: AtlasDebeziumSlotLagTime
+        expr: max(debezium_metrics_MilliSecondsBehindSource{context="streaming"}) > 5000
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          plan_row: "Replication slot lag (change log Debezium hasn't read yet)"
+          summary: "Debezium is {{ $value }} ms behind the source (limit 5 s)"
+          description: "From Debezium's JMX streaming metrics (MilliSecondsBehindSource)."
+
+      - alert: AtlasSlotWalAtRisk
+        expr: |
+          min by (slot_name) (atlas_pg_replication_slot_safe_wal_size_bytes) < 1073741824
+          or
+          max by (slot_name) (atlas_pg_replication_slot_active{wal_status=~"unreserved|lost"})
+        labels: { severity: critical }
+        annotations:
+          plan_row: "Replication slot lag (extra: invalidation guard)"
+          summary: "Slot {{ $labels.slot_name }} is close to max_slot_wal_keep_size or already lost"
+          description: "Less than 1 GiB left before Postgres invalidates the slot. A lost slot means a full resync."
+
+      - alert: AtlasDebeziumDisconnected
+        expr: max(debezium_metrics_Connected{context="streaming"}) == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          plan_row: "Replication slot lag (extra: connector health)"
+          summary: "Debezium streaming connector is not connected to Postgres"
+
+      - alert: AtlasSequenceGap
+        expr: sum by (type) (increase(atlas_sequence_gaps_total[5m])) > 0
+        labels: { severity: warning }
+        annotations:
+          plan_row: "Stream sequence gaps and full reloads triggered"
+          summary: "{{ $value }} sequence gaps on changes:{{ $labels.type }} in 5 min"
+          description: "Expected right after a Redis failover (events lost, views reloaded). Investigate any other gap."
+
+      - alert: AtlasSamplerMismatch
+        expr: sum by (worker) (increase(atlas_sampler_mismatches_total[10m])) > 0
+        labels: { severity: critical }
+        annotations:
+          plan_row: "Online sampler mismatches"
+          summary: "Online sampler found {{ $value }} mismatches on {{ $labels.worker }}"
+          description: "A sampled entity's view membership disagrees with Postgres: likely a missed cross-entity link."
+
+  - name: atlas-workers
+    rules:
+      - alert: AtlasStreamLagHigh
+        expr: max by (worker, type) (atlas_stream_lag_seconds) > 5
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          plan_row: "Stream lag per worker"
+          summary: "{{ $labels.worker }} is {{ $value | humanizeDuration }} behind changes:{{ $labels.type }}"
+
+      - alert: AtlasTickOverHalfInterval
+        expr: worker:atlas_tick_duration_over_interval:ratio > 0.5
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          plan_row: "Tick duration versus interval, per worker"
+          summary: "{{ $labels.worker }} tick p99 is {{ $value | humanizePercentage }} of the interval (limit 50%)"
+          description: "ASSUMPTION (pending S-09): interval is atlas_tick_interval_seconds if exported, else 1 s (TICK_MS default)."
+
+      - alert: AtlasBuildQueueStuck
+        expr: max by (worker) (atlas_build_queue_length) > 0
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          plan_row: "Views owned, pages and builds queued, per worker"
+          summary: "{{ $labels.worker }} has had builds queued for over 60 s ({{ $value }} now)"
+
+      - alert: AtlasWorkerListMismatch
+        expr: |
+          (max(redis_keys_count{key="*:workers:view-service-*"}) or vector(0))
+          !=
+          (count(up{job="view-service"} == 1) or vector(0))
+        for: 30s
+        labels: { severity: warning }
+        annotations:
+          plan_row: "Workers in the list versus ready pods in OpenShift"
+          summary: "Redis worker list has {{ $value }} entries, which differs from the workers being scraped"
+          description: "ASSUMPTION: locally, 'ready pods' = view-service targets that are up, and worker names match view-service-*. In OpenShift compare with kube_pod_status_ready instead."
+
+      - alert: AtlasOwnershipMovesSustained
+        expr: sum(rate(atlas_ownership_moves_total[5m])) > 0
+        for: 15m
+        labels: { severity: info }
+        annotations:
+          plan_row: "Ownership moves per minute"
+          summary: "Views keep moving between workers ({{ $value | humanize }}/s for 15 min)"
+          description: "Expected during deploys and scaling; silence it then. Otherwise membership is flapping."
+
+      - alert: AtlasConnectionsJump
+        expr: |
+          sum(atlas_ws_connections) > 1.5 * sum(avg_over_time(atlas_ws_connections[1h] offset 10m))
+          and
+          sum(atlas_ws_connections) > 50
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          plan_row: "Client connections, ..., send-cap drops, client resyncs"
+          summary: "Client connections jumped to {{ $value }} (over 1.5x the previous hour)"
+          description: "Often a reconnect storm after a worker restart."
+
+      - alert: AtlasBackpressureDropsJump
+        expr: |
+          sum(rate(atlas_backpressure_drops_total[5m])) > 3 * sum(rate(atlas_backpressure_drops_total[1h] offset 5m))
+          and
+          sum(rate(atlas_backpressure_drops_total[5m])) > 0.1
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          plan_row: "Client connections, ..., send-cap drops, client resyncs"
+          summary: "Send-cap drops rose to {{ $value | humanize }}/s (over 3x the previous hour)"
+
+      - alert: AtlasWorkerMemoryHigh
+        expr: max by (worker) (process_resident_memory_bytes{job="view-service"}) > 0.7 * 4294967296
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          plan_row: "Memory per worker"
+          summary: "{{ $labels.worker }} uses {{ $value | humanize1024 }}B (over 70% of 4 GiB)"
+          description: "ASSUMPTION: the limit is the plan's 4 GiB per worker; in OpenShift use the container limit."
+
+      - alert: AtlasReplicaWaitsLong
+        expr: |
+          sum by (worker) (
+            increase(atlas_replica_wait_seconds_count[1m]) - increase(atlas_replica_wait_seconds_bucket{le="1"}[1m])
+          ) > 3
+        labels: { severity: warning }
+        annotations:
+          plan_row: "Ticks deferred or moved to the primary by replica lag"
+          summary: "{{ $labels.worker }}: {{ $value }} ticks waited over 1 s for the replica in the last minute"
+          description: 'ASSUMPTION (pending S-09): atlas_replica_wait_seconds is a histogram with a le="1" bucket. A counter of primary fallbacks would be exact (proposed).'
+
+      - alert: AtlasEventLoopDelayHigh
+        expr: worker:atlas_event_loop_delay_seconds:p99 > 0.1
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          plan_row: "Event-loop delay p99 and WebSocket buffered bytes per worker"
+          summary: "{{ $labels.worker }} event-loop delay p99 is {{ $value | humanizeDuration }} (limit 100 ms)"
+
+      - alert: AtlasWsBuffersNearCap
+        expr: |
+          sum by (worker) (atlas_ws_buffered_bytes)
+            / clamp_min(sum by (worker) (atlas_ws_connections), 1)
+          > 524288
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          plan_row: "Event-loop delay p99 and WebSocket buffered bytes per worker"
+          summary: "{{ $labels.worker }} averages {{ $value | humanize1024 }}B buffered per client (cap 1 MiB)"
+          description: "ASSUMPTION (pending S-09): atlas_ws_buffered_bytes is the worker's total. Half the 1 MiB maxBackpressure per client on average means many clients are backed up."
+
+  - name: atlas-infra
+    rules:
+      - alert: AtlasReplicaLagHigh
+        expr: atlas:pg_replica_lag_seconds > 2
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          plan_row: "Read replica lag"
+          summary: "Postgres read replica is {{ $value | humanizeDuration }} behind (limit 2 s)"
+          description: "Workers wait for the replica, then fall back to the primary after 2 s."
+
+      - alert: AtlasReplicaQueryCancellations
+        expr: sum(increase(atlas_pg_conflicts_confl_total{instance="postgres-replica"}[5m])) > 0
+        labels: { severity: warning }
+        annotations:
+          plan_row: "Replica query cancellations (pg_stat_database_conflicts)"
+          summary: "{{ $value }} queries cancelled on the read replica in 5 min"
+
+      - alert: AtlasRedisMemoryHigh
+        expr: max by (instance) (redis_memory_used_bytes / (redis_memory_max_bytes > 0)) > 0.8
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          plan_row: "Extra: Redis runs with maxmemory-policy noeviction"
+          summary: "Redis {{ $labels.instance }} is at {{ $value | humanizePercentage }} of maxmemory"
+          description: "At 100% writes fail, Debezium's sink stops and stream lag grows. Check stream trimming."
+
+      - alert: AtlasInfraTargetDown
+        expr: up{job=~"debezium|redis|redis-exporter|postgres"} == 0
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          plan_row: "Extra: scrape health"
+          summary: "{{ $labels.job }} target {{ $labels.instance }} is down"

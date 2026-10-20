@@ -1,0 +1,138 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "view-service.fullname" . }}
+  labels:
+    {{- include "view-service.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "view-service.headlessName" . }}
+  {{- /* With the HPA on, it owns the count; set it only on first install so upgrades don't reset it. */}}
+  {{- if or (not .Values.autoscaling.enabled) .Release.IsInstall }}
+  replicas: {{ .Values.autoscaling.enabled | ternary .Values.autoscaling.minReplicas .Values.replicas }}
+  {{- end }}
+  # Parallel only affects scale up/down (no waiting for lower ordinals). Rolling updates still
+  # replace one pod at a time, highest ordinal first, waiting for each to be ready.
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+  minReadySeconds: {{ .Values.minReadySeconds }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "view-service.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "view-service.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.podAntiAffinity.enabled }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: {{ .Values.podAntiAffinity.topologyKey }}
+                labelSelector:
+                  matchLabels:
+                    {{- include "view-service.selectorLabels" . | nindent 20 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: view-service
+          image: {{ include "view-service.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.ports.http }}
+              protocol: TCP
+            {{- if include "view-service.separateWsPort" . }}
+            - name: ws
+              containerPort: {{ .Values.ports.ws }}
+              protocol: TCP
+            {{- end }}
+            - name: grpc
+              containerPort: {{ .Values.ports.grpc }}
+              protocol: TCP
+          env:
+            # Worker name = pod name, stable across restarts (hashing input, contracts §2).
+            - name: WORKER_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            # Address other workers dial for gRPC; written to the membership entry (S-06).
+            - name: WORKER_ADDRESS
+              value: "$(WORKER_NAME).{{ include "view-service.headlessName" . }}.$(POD_NAMESPACE).svc.cluster.local"
+            - name: SERVICE_NAME
+              value: {{ include "view-service.serviceName" . | quote }}
+            - name: ENTITY_TYPES
+              value: {{ join "," .Values.entityTypes | quote }}
+            # Current starter reads PORT; S-01 renames it to HTTP_PORT. Both are set.
+            - name: PORT
+              value: {{ .Values.ports.http | quote }}
+            - name: HTTP_PORT
+              value: {{ .Values.ports.http | quote }}
+            - name: WS_PORT
+              value: {{ .Values.ports.ws | quote }}
+            - name: GRPC_PORT
+              value: {{ .Values.ports.grpc | quote }}
+            - name: NODE_ENV
+              value: {{ .Values.nodeEnv | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
+            - name: NODE_OPTIONS
+              value: {{ .Values.nodeOptions | quote }}
+            {{- range $name, $value := .Values.env }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+          {{- with .Values.envFromSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ . }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          startupProbe:
+            {{- toYaml .Values.probes.startup | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.probes.liveness | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.probes.readiness | nindent 12 }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "{{ .Values.preStopSleepSeconds }}"]
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
