@@ -1,0 +1,99 @@
+{{- if .Values.debezium.enabled }}
+{{- $d := .Values.debezium }}
+# One Debezium only: a replication slot serves one reader (plan, "Write path" item 6). Recreate
+# stops the old pod before starting the new one, so two never compete for the slot.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "atlas-pipeline.debezium.name" . }}
+  labels:
+    {{- include "atlas-pipeline.labels" . | nindent 4 }}
+    {{- include "atlas-pipeline.debezium.selector" . | nindent 4 }}
+    app.kubernetes.io/component: cdc
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "atlas-pipeline.debezium.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "atlas-pipeline.labels" . | nindent 8 }}
+        {{- include "atlas-pipeline.debezium.selector" . | nindent 8 }}
+        app.kubernetes.io/component: cdc
+      annotations:
+        # Roll the pod when the properties change.
+        checksum/config: {{ include (print $.Template.BasePath "/debezium-configmap.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ $d.terminationGracePeriodSeconds }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: debezium-server
+          image: {{ printf "%s:%s" $d.image.repository $d.image.tag }}
+          imagePullPolicy: {{ $d.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: ATLAS_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $d.database.passwordSecret.name }}
+                  key: {{ $d.database.passwordSecret.key }}
+            - name: JAVA_OPTS
+              value: {{ $d.javaOpts | quote }}
+          resources:
+            {{- toYaml $d.resources | nindent 12 }}
+          startupProbe:
+            {{- toYaml $d.probes.startup | nindent 12 }}
+          livenessProbe:
+            {{- toYaml $d.probes.liveness | nindent 12 }}
+          readinessProbe:
+            {{- toYaml $d.probes.readiness | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /debezium/config
+              readOnly: true
+            # Writable scratch space: OpenShift runs the image with an arbitrary UID.
+            - name: data
+              mountPath: /debezium/data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "atlas-pipeline.debezium.name" . }}
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+# Health and metrics endpoint (not exposed outside the namespace).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "atlas-pipeline.debezium.name" . }}
+  labels:
+    {{- include "atlas-pipeline.labels" . | nindent 4 }}
+    {{- include "atlas-pipeline.debezium.selector" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "atlas-pipeline.debezium.selector" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+{{- end }}

@@ -1,0 +1,16 @@
+# Service "reference": airports and countries (S-10). Same chart and image as "tracks"; only
+# the entity types, Redis prefix (serviceName) and Route differ. Install:
+#   helm upgrade --install reference deploy/charts/view-service -f deploy/charts/view-service/values-reference.yaml
+serviceName: reference
+entityTypes:
+  - airports
+  - countries
+
+env:
+  REDIS_URL: redis://redis:6379
+  TICK_MS: "1000"
+
+envFromSecret: atlas-view-service-db
+
+route:
+  host: ""

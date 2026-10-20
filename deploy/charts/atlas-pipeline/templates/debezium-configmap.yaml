@@ -1,0 +1,74 @@
+{{- if .Values.debezium.enabled }}
+{{- $d := .Values.debezium }}
+# Mirrors infra/debezium/application.properties (task I-03 owns that file). Keep the two in sync;
+# only addresses, credentials and logging differ here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "atlas-pipeline.debezium.name" . }}
+  labels:
+    {{- include "atlas-pipeline.labels" . | nindent 4 }}
+    {{- include "atlas-pipeline.debezium.selector" . | nindent 4 }}
+data:
+  application.properties: |
+    # ---------- Sink: Redis Streams, through the master-only proxy ----------
+    debezium.sink.type=redis
+    debezium.sink.redis.address={{ $d.redis.address }}
+    debezium.sink.redis.batch.size=500
+    debezium.sink.redis.wait.enabled=true
+    debezium.sink.redis.wait.timeout.ms=1000
+    debezium.sink.redis.wait.retry.enabled=true
+    debezium.sink.redis.wait.retry.delay.ms=500
+    debezium.sink.redis.null.key=default
+    debezium.sink.redis.null.value=default
+
+    # ---------- Source: Postgres (Patroni primary Service), outbox table only ----------
+    debezium.source.connector.class=io.debezium.connector.postgresql.PostgresConnector
+    debezium.source.database.hostname={{ $d.database.host }}
+    debezium.source.database.port={{ $d.database.port }}
+    debezium.source.database.user={{ $d.database.user }}
+    debezium.source.database.password=${ATLAS_DB_PASSWORD}
+    debezium.source.database.dbname={{ $d.database.name }}
+    debezium.source.topic.prefix=atlas
+    debezium.source.plugin.name=pgoutput
+    debezium.source.slot.name=atlas_outbox
+    debezium.source.publication.name=atlas_outbox
+    debezium.source.publication.autocreate.mode=disabled
+    debezium.source.table.include.list=public.outbox
+    debezium.source.snapshot.mode=no_data
+    debezium.source.tombstones.on.delete=false
+    debezium.source.slot.failover=true
+    debezium.source.offset.mismatch.strategy=trust_offset
+
+    debezium.source.heartbeat.interval.ms={{ $d.heartbeatIntervalMs }}
+    debezium.source.heartbeat.action.query=SELECT pg_logical_emit_message(false, 'heartbeat', now()::varchar)
+
+    # ---------- Read position stored in Postgres ----------
+    debezium.source.offset.storage=io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore
+    debezium.source.offset.storage.jdbc.connection.url=jdbc:postgresql://{{ $d.database.host }}:{{ $d.database.port }}/{{ $d.database.name }}
+    debezium.source.offset.storage.jdbc.connection.user={{ $d.database.user }}
+    debezium.source.offset.storage.jdbc.connection.password=${ATLAS_DB_PASSWORD}
+    debezium.source.offset.storage.jdbc.offset.table.name=debezium_offsets
+    debezium.source.offset.flush.interval.ms={{ $d.offsetFlushIntervalMs }}
+
+    # ---------- Outbox Event Router: one Redis stream per entity type ----------
+    debezium.transforms=outbox
+    debezium.transforms.outbox.type=io.debezium.transforms.outbox.EventRouter
+    debezium.transforms.outbox.route.by.field=aggregatetype
+    debezium.transforms.outbox.route.topic.replacement=changes:$${routedByValue}
+    debezium.transforms.outbox.table.field.event.key=aggregateid
+    debezium.transforms.outbox.table.field.event.payload=payload
+    debezium.transforms.outbox.table.op.invalid.behavior=error
+    debezium.transforms.outbox.table.expand.json.payload=true
+
+    debezium.format.value=json
+    debezium.format.value.schemas.enable=false
+    debezium.format.key=json
+    debezium.format.key.schemas.enable=false
+
+    quarkus.log.level={{ $d.logLevel }}
+    quarkus.log.console.json={{ $d.logJson }}
+    {{- range $k, $v := $d.extraProperties }}
+    {{ $k }}={{ $v }}
+    {{- end }}
+{{- end }}

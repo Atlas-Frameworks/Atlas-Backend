@@ -1,0 +1,175 @@
+# Defaults for one view service. Per-service files (values-tracks.yaml, values-reference.yaml)
+# override only what differs. Plan: docs/architecture-plan.md, "Multi-pod deployment without
+# sticky sessions" and "Deploys and scaling". Contracts: docs/contracts.md §2, §4, §8.
+
+# Service name: Redis key prefix and worker-list name (contracts §2: "<svc>:workers:*").
+# Required. Also the default resource name prefix ("<serviceName>-view").
+serviceName: ""
+# Entity types this service owns (S-10), passed as ENTITY_TYPES.
+entityTypes: []
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  # Built from apps/view-service/Dockerfile (task S-01, UBI 9 + Node 24). Not built yet.
+  repository: image-registry.openshift-image-registry.svc:5000/atlas/view-service
+  # Empty = Chart appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Ports inside the pod. ASSUMPTION (S-01): HTTP serves /health/* and /metrics; uWebSockets.js
+# listens on a separate WS_PORT; gRPC (contracts §4) on GRPC_PORT. If S-01 ends up serving
+# WebSockets on the HTTP port, set ports.ws equal to ports.http.
+ports:
+  http: 3000
+  ws: 3001
+  grpc: 50051
+
+# Workers run as a StatefulSet so pod names (= worker names, = hashing inputs) survive rollouts
+# (caveat 42). With autoscaling.enabled the HPA owns the replica count; this value is only used
+# on first install.
+replicas: 3
+
+# A new pod must stay ready this long before the rollout moves to the next pod. Matches the 10 s
+# membership anti-flap window plus a margin.
+minReadySeconds: 15
+
+# Heap flags from the plan (S-01): 2.5 GiB old space inside a 4 GiB limit leaves room for
+# uWebSockets.js buffers, gRPC and native memory.
+nodeOptions: "--max-old-space-size=2560 --max-semi-space-size=32"
+
+nodeEnv: production
+logLevel: info
+
+# Plain environment variables added to the container (map of NAME: value).
+# S-01 config names: REDIS_URL, PG_REPLICA_URL, PG_PRIMARY_URL, TICK_MS.
+env:
+  REDIS_URL: redis://redis:6379
+  TICK_MS: "1000"
+
+# Name of an existing Secret loaded with envFrom (put database URLs with passwords here, for
+# example keys PG_PRIMARY_URL and PG_REPLICA_URL). Empty = none.
+envFromSecret: ""
+
+resources:
+  requests:
+    cpu: "1"
+    memory: 4Gi
+  limits:
+    cpu: "1"
+    memory: 4Gi
+
+# ASSUMPTION (S-01/S-09): GET /health/live = process is responsive; GET /health/ready = registered
+# in membership, streams caught up (lag < 2 s) and the WebSocket server listening. Neither exists
+# yet in apps/view-service (it is still the Nest starter).
+probes:
+  startup:
+    httpGet:
+      path: /health/live
+      port: http
+    periodSeconds: 2
+    failureThreshold: 60
+    timeoutSeconds: 2
+  liveness:
+    httpGet:
+      path: /health/live
+      port: http
+    periodSeconds: 10
+    failureThreshold: 3
+    timeoutSeconds: 2
+  readiness:
+    httpGet:
+      path: /health/ready
+      port: http
+    periodSeconds: 2
+    failureThreshold: 2
+    successThreshold: 1
+    timeoutSeconds: 2
+
+# Planned stop (S-07): SIGTERM -> not ready, leave membership, make-before-break handover (<= 20 s),
+# Reconnect to clients with 0-15 s jitter, exit. The preStop sleep gives the router and endpoint
+# controllers time to stop sending new connections before SIGTERM arrives.
+preStopSleepSeconds: 5
+terminationGracePeriodSeconds: 60
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+# Spread workers across nodes so one node loss doesn't take several owners at once.
+podAntiAffinity:
+  enabled: true
+  topologyKey: kubernetes.io/hostname
+
+nodeSelector: {}
+tolerations: []
+podAnnotations: {}
+podLabels: {}
+
+service:
+  # Normal Service in front of the WebSocket port (target of the Route) and the HTTP port.
+  type: ClusterIP
+  annotations: {}
+
+# Headless Service: stable per-pod DNS for worker-to-worker gRPC
+# (<pod>.<headless>.<namespace>.svc.cluster.local). Lists pods that are not ready too, because an
+# owner that is shutting down (not ready) still streams to its subscribers during handover.
+headless:
+  publishNotReadyAddresses: true
+
+route:
+  enabled: true
+  # Empty = OpenShift generates <route>-<namespace>.<apps domain>.
+  host: ""
+  # Service port the Route sends traffic to: "ws" or "http".
+  targetPort: ws
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  # Caveat 31. Names checked against the OpenShift Container Platform 4.20 docs
+  # (Ingress and load balancing > Routes > Route-specific annotations).
+  annotations:
+    haproxy.router.openshift.io/disable_cookies: "true"
+    haproxy.router.openshift.io/balance: leastconn
+    haproxy.router.openshift.io/timeout: 60s
+  # Extra annotations merged on top, e.g. haproxy.router.openshift.io/timeout-tunnel.
+  extraAnnotations: {}
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 5
+  # Plan: scale out when memory is over 70% of the limit.
+  targetMemoryUtilization: 70
+  # Optional custom metric (off by default). Needs a custom metrics API serving the per-pod
+  # Prometheus metric (contracts §8), e.g. prometheus-adapter or KEDA on top of user-workload
+  # monitoring. The plan prefers "entities held per worker" over view count.
+  customMetric:
+    enabled: false
+    name: atlas_entities_held
+    # Average per pod; scale out above this.
+    averageValue: "150000"
+  # Add or remove one worker at a time: every change moves about 1/N of the views.
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 300
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1

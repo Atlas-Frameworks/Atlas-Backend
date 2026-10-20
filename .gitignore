@@ -17,3 +17,6 @@ packages/protocol/src/gen/
 
 # Claude Code agent worktrees
 .claude/worktrees/
+
+# Helm output from deploy/scripts/validate.sh
+deploy/.rendered/

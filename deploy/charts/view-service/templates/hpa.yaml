@@ -1,0 +1,37 @@
+{{- if .Values.autoscaling.enabled }}
+{{- $a := .Values.autoscaling }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "view-service.fullname" . }}
+  labels:
+    {{- include "view-service.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: {{ include "view-service.fullname" . }}
+  minReplicas: {{ $a.minReplicas }}
+  maxReplicas: {{ $a.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ $a.targetMemoryUtilization }}
+    {{- if $a.customMetric.enabled }}
+    # Needs a custom metrics API adapter; see deploy/README.md.
+    - type: Pods
+      pods:
+        metric:
+          name: {{ $a.customMetric.name }}
+        target:
+          type: AverageValue
+          averageValue: {{ $a.customMetric.averageValue | quote }}
+    {{- end }}
+  {{- with $a.behavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

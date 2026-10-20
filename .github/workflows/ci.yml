@@ -33,3 +33,13 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
+
+  # Task I-04: render every Helm chart/values combination and validate it with kubeconform
+  # (Kubernetes 1.33 = OpenShift 4.20, plus the vendored Route schema). Pinned Docker images.
+  deploy-manifests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Render and validate deploy/
+        run: bash deploy/scripts/validate.sh

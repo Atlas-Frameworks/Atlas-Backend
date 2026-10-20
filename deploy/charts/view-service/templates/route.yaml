@@ -1,0 +1,30 @@
+{{- if .Values.route.enabled }}
+{{- $targetPort := .Values.route.targetPort }}
+{{- if not (include "view-service.separateWsPort" .) }}
+{{- $targetPort = "http" }}
+{{- end }}
+# WebSocket entry point. No sticky cookie and least-connections balancing so connections spread
+# evenly after restarts; route timeout above the 16 s client ping interval (caveat 31).
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "view-service.fullname" . }}
+  labels:
+    {{- include "view-service.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml (merge (deepCopy .Values.route.extraAnnotations) .Values.route.annotations) | nindent 4 }}
+spec:
+  {{- with .Values.route.host }}
+  host: {{ . }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "view-service.fullname" . }}
+    weight: 100
+  port:
+    targetPort: {{ $targetPort }}
+  tls:
+    termination: {{ .Values.route.tls.termination }}
+    insecureEdgeTerminationPolicy: {{ .Values.route.tls.insecureEdgeTerminationPolicy }}
+  wildcardPolicy: None
+{{- end }}

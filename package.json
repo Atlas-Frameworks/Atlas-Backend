@@ -26,7 +26,8 @@
     "dev:client": "npm run start -w @atlas/client",
     "infra:up": "docker compose -f infra/docker-compose.yml up -d",
     "infra:down": "docker compose -f infra/docker-compose.yml down -v",
-    "infra:logs": "docker compose -f infra/docker-compose.yml logs -f --tail=100"
+    "infra:logs": "docker compose -f infra/docker-compose.yml logs -f --tail=100",
+    "deploy:validate": "bash deploy/scripts/validate.sh"
   },
   "allowScripts": {
     "esbuild@0.28.2": true,

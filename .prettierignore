@@ -10,3 +10,9 @@ package-lock.json
 
 # Claude Code agent worktrees
 .claude/worktrees/
+
+# Helm templates contain {{ }} directives that are not valid YAML; the vendored Route schema is
+# generated (deploy/scripts/update-route-schema.sh); rendered manifests are build output.
+deploy/**/templates/
+deploy/schemas/
+deploy/.rendered/
