@@ -11,3 +11,5 @@
  * - adapters/   C-05  MapAdapter interface (Cesium / deck.gl implementations live in separate packages)
  */
 export * from './core/index.js';
+export * from './map-store/index.js';
+export * from './adapters/index.js';

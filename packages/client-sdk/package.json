@@ -22,7 +22,8 @@
     "build": "tsc -b tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "oxlint --type-aware --deny-warnings src",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "bench": "vitest run --config vitest.perf.config.ts"
   },
   "devDependencies": {
     "typescript": "~6.0.2",
