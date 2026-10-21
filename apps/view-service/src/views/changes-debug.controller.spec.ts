@@ -7,6 +7,7 @@ import { StreamReader } from '../changes/stream-reader.js';
 import { changeEvent } from '../changes/test-events.js';
 import { DbService } from '../db/db.service.js';
 import { ExampleModule } from '../example/example.module.js';
+import { TickService } from './tick.service.js';
 
 describe('GET /changes', () => {
   let app: INestApplication<App>;
@@ -26,6 +27,8 @@ describe('GET /changes', () => {
       .overrideProvider(StreamReader)
       .useValue(reader)
       .compile();
+    // Keep the events pending, so the test sees them before a tick takes them.
+    moduleRef.get(TickService).tickMs = 60_000;
     app = moduleRef.createNestApplication();
     await app.init();
   });
@@ -71,6 +74,7 @@ describe('GET /changes', () => {
       typeSeq: { orders: 3 },
       feed: { entries: 2, invalid: 0, readErrors: 0 },
       buffer: { received: 2, duplicates: 0, gaps: 0 },
+      tick: { ticks: 0 },
       pending: [
         {
           type: 'orders',

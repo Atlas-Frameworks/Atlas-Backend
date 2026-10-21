@@ -66,11 +66,41 @@ describe('ChangeBuffer', () => {
     ]);
   });
 
-  it('ignores an older version of a pending entity', () => {
-    buffer.push(changeEvent({ version: 5, typeSeq: 1 }));
+  it('keeps the newest version when an older one comes later, with both changed fields', () => {
+    buffer.push(
+      changeEvent({
+        version: 5,
+        typeSeq: 1,
+        changes: { old: { name: 'x' }, new: { name: 'y' } },
+      }),
+    );
     buffer.push(changeEvent({ version: 4, typeSeq: 2 }));
 
-    expect(buffer.drain().events.map((e) => e.version)).toEqual([5]);
+    const [evt] = buffer.drain().events;
+    expect(evt.version).toBe(5);
+    expect(evt.changes).toEqual({
+      old: { item_id: 'a', name: 'x' },
+      new: { item_id: 'b', name: 'y' },
+    });
+  });
+
+  it('takes back a failed batch without counting its typeSeq again', () => {
+    buffer.push(changeEvent({ id: 'a', typeSeq: 1 }));
+    buffer.push(changeEvent({ id: 'b', typeSeq: 3 }));
+    const batch = buffer.drain();
+    buffer.push(changeEvent({ id: 'c', typeSeq: 4 }));
+
+    buffer.requeue(batch);
+
+    expect(buffer.drain()).toEqual({
+      events: [
+        expect.objectContaining({ id: 'c' }),
+        expect.objectContaining({ id: 'a' }),
+        expect.objectContaining({ id: 'b' }),
+      ],
+      gapTypes: ['orders'],
+    });
+    expect(buffer.stats).toEqual({ received: 3, duplicates: 0, gaps: 1 });
   });
 
   it('keeps an insert an insert, and lets a delete win', () => {

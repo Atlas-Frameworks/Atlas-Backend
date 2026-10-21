@@ -37,14 +37,21 @@ export class ChangeBuffer {
       this.stats.gaps += 1;
       this.gapTypes.add(evt.type);
     }
-    const key = `${evt.type}:${evt.id}`;
-    const existing = this.pending.get(key);
-    if (!existing) {
-      this.pending.set(key, evt);
-    } else if (evt.version > existing.version) {
-      this.pending.set(key, merge(existing, evt));
-    }
+    this.keep(evt);
     return gap ? 'gap' : 'ok';
+  }
+
+  /**
+   * Puts back a batch whose tick failed, so the next tick runs it again.
+   * Skips the typeSeq check: these events were already counted.
+   */
+  requeue(batch: ChangeBatch): void {
+    for (const evt of batch.events) {
+      this.keep(evt);
+    }
+    for (const type of batch.gapTypes) {
+      this.gapTypes.add(type);
+    }
   }
 
   /** Returns the batch and starts a new one. */
@@ -66,6 +73,19 @@ export class ChangeBuffer {
   /** The last typeSeq seen per type. */
   sequences(): Record<string, number> {
     return Object.fromEntries(this.lastTypeSeq);
+  }
+
+  /** Adds the event to the pending one of the same entity, in version order. */
+  private keep(evt: ChangeEvent): void {
+    const key = `${evt.type}:${evt.id}`;
+    const existing = this.pending.get(key);
+    if (!existing) {
+      this.pending.set(key, evt);
+    } else if (evt.version > existing.version) {
+      this.pending.set(key, merge(existing, evt));
+    } else if (evt.version < existing.version) {
+      this.pending.set(key, merge(evt, existing));
+    }
   }
 }
 

@@ -1,6 +1,7 @@
 import type { DbService } from '../db/db.service.js';
 import { View } from './view.js';
-import { ViewLoader } from './view-loader.js';
+import { sql } from './sql.js';
+import { recheckStatement, ViewLoader } from './view-loader.js';
 
 const statement = {
   text: 'SELECT o.id, o.version FROM orders o WHERE o.name = $1',
@@ -61,5 +62,46 @@ describe('ViewLoader', () => {
 
     expect(db.query).toHaveBeenCalledTimes(2);
     expect(view.ids.has('a')).toBe(true);
+  });
+
+  it("re-checks ids with the view's own SQL, the ids as the next parameter", async () => {
+    const { db, loader, view } = setup(async () => [{ id: 'a', version: '4' }]);
+
+    const rows = await loader.recheck(view, ['a', 'b']);
+
+    expect(db.query).toHaveBeenCalledWith({
+      text: 'SELECT q.id, q.version FROM (SELECT o.id, o.version FROM orders o WHERE o.name = $1) q WHERE q.id = ANY($2)',
+      values: ['x', ['a', 'b']],
+    });
+    expect(rows).toEqual([{ id: 'a', version: 4 }]);
+  });
+
+  it('runs a link for changed ids of a related type', async () => {
+    const { db, loader } = setup(async () => [{ id: 'a', version: '1' }]);
+
+    const ids = await loader.linked(
+      (itemIds) =>
+        sql`SELECT o.id FROM orders o WHERE o.item_id = ANY(${itemIds})`,
+      ['item-1'],
+    );
+
+    expect(db.query).toHaveBeenCalledWith({
+      text: 'SELECT o.id FROM orders o WHERE o.item_id = ANY($1)',
+      values: [['item-1']],
+    });
+    expect(ids).toEqual(['a']);
+  });
+});
+
+describe('recheckStatement', () => {
+  it('works for SQL without parameters', () => {
+    expect(
+      recheckStatement({ text: 'SELECT id, version FROM orders', values: [] }, [
+        'a',
+      ]),
+    ).toEqual({
+      text: 'SELECT q.id, q.version FROM (SELECT id, version FROM orders) q WHERE q.id = ANY($1)',
+      values: [['a']],
+    });
   });
 });

@@ -101,6 +101,11 @@ export class DependencyIndex {
     return [...this.byType.keys()];
   }
 
+  /** Every view that depends on this type, its own or a related one. */
+  viewsOf(type: string): string[] {
+    return [...(this.byType.get(type)?.keys() ?? [])];
+  }
+
   dependenciesOf(viewKey: string): Record<string, Dependency> | undefined {
     return this.views.get(viewKey)?.dependsOn;
   }
