@@ -1,6 +1,7 @@
 import type { DbService } from '../db/db.service.js';
 import { View } from './view.js';
 import { sql } from './sql.js';
+import { hashRow } from './view-diff.js';
 import { recheckStatement, ViewLoader } from './view-loader.js';
 
 const statement = {
@@ -15,10 +16,10 @@ function setup(query: () => Promise<{ id: string; version: string }[]>) {
 }
 
 describe('ViewLoader', () => {
-  it("fills the view with ids and versions from the view's statement", async () => {
+  it("fills the view with ids, versions and row hashes from the view's statement", async () => {
     const { db, loader, view } = setup(async () => [
-      { id: 'a', version: '3' },
-      { id: 'b', version: '1' },
+      { id: 'a', version: '3', name: 'x' },
+      { id: 'b', version: '1', name: 'y' },
     ]);
 
     await loader.ensureLoaded(view);
@@ -29,6 +30,9 @@ describe('ViewLoader', () => {
       ['a', 3],
       ['b', 1],
     ]);
+    expect(view.hashes.get('a')).toBe(
+      hashRow({ id: 'a', version: 3, name: 'x' }),
+    );
   });
 
   it('runs one query for callers that arrive while it loads', async () => {
@@ -64,16 +68,25 @@ describe('ViewLoader', () => {
     expect(view.ids.has('a')).toBe(true);
   });
 
-  it("re-checks ids with the view's own SQL, the ids as the next parameter", async () => {
-    const { db, loader, view } = setup(async () => [{ id: 'a', version: '4' }]);
+  it("reads rows by id with the view's own SQL, the ids as the next parameter", async () => {
+    const { db, loader, view } = setup(async () => [
+      { id: 'a', version: '4', name: 'x' },
+    ]);
 
-    const rows = await loader.recheck(view, ['a', 'b']);
+    const rows = await loader.fetchByIds(view, ['a', 'b']);
 
     expect(db.query).toHaveBeenCalledWith({
-      text: 'SELECT q.id, q.version FROM (SELECT o.id, o.version FROM orders o WHERE o.name = $1) q WHERE q.id = ANY($2)',
+      text: 'SELECT q.* FROM (SELECT o.id, o.version FROM orders o WHERE o.name = $1) q WHERE q.id = ANY($2)',
       values: ['x', ['a', 'b']],
     });
-    expect(rows).toEqual([{ id: 'a', version: 4 }]);
+    expect(rows).toEqual([{ id: 'a', version: 4, name: 'x' }]);
+  });
+
+  it('reads no rows for no ids, without a query', async () => {
+    const { db, loader, view } = setup(async () => []);
+
+    expect(await loader.fetchByIds(view, [])).toEqual([]);
+    expect(db.query).not.toHaveBeenCalled();
   });
 
   it('runs a link for changed ids of a related type', async () => {
@@ -100,7 +113,7 @@ describe('recheckStatement', () => {
         'a',
       ]),
     ).toEqual({
-      text: 'SELECT q.id, q.version FROM (SELECT id, version FROM orders) q WHERE q.id = ANY($1)',
+      text: 'SELECT q.* FROM (SELECT id, version FROM orders) q WHERE q.id = ANY($1)',
       values: [['a']],
     });
   });

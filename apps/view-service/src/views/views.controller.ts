@@ -48,8 +48,9 @@ export class ViewsController {
   }
 
   /**
-   * GET /views/:viewKey/events. The first event is a snapshot of the view;
-   * every later event has the next seq, sent as the SSE id.
+   * GET /views/:viewKey/events. The first event is a snapshot of the view
+   * with its rows; every later event has the next seq, sent as the SSE id.
+   * If the rows can't be read, the stream ends and the client reconnects.
    */
   @Sse(':viewKey/events')
   events(@Param('viewKey') key: string): Observable<MessageEvent> {
@@ -61,19 +62,26 @@ export class ViewsController {
       });
     }
     const events = new Observable<MessageEvent>((subscriber) => {
-      // Snapshot and listener are added in one synchronous step,
-      // so no event can fall between them.
-      subscriber.next(
-        toMessage({
-          type: 'snapshot',
-          seq: view.seq,
-          data: this.views.snapshot(view),
-        }),
-      );
+      // The snapshot's seq and the listener are taken in one synchronous step,
+      // so no event can fall between them. Events published while the rows
+      // are read wait, and follow the snapshot.
+      let waiting: ViewEvent[] | undefined = [];
       const listener: ViewListener = {
-        send: (event) => subscriber.next(toMessage(event)),
+        send: (event) =>
+          waiting ? waiting.push(event) : subscriber.next(toMessage(event)),
       };
+      const snapshot = this.views.snapshot(view);
       this.views.addListener(view, listener);
+      snapshot.then(
+        (data) => {
+          subscriber.next(toMessage({ type: 'snapshot', seq: data.seq, data }));
+          for (const event of waiting ?? []) {
+            subscriber.next(toMessage(event));
+          }
+          waiting = undefined;
+        },
+        (err: unknown) => subscriber.error(err),
+      );
       return () => this.views.removeListener(view, listener);
     });
     const heartbeat = interval(HEARTBEAT_MS).pipe(

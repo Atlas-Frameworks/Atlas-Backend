@@ -6,6 +6,7 @@ import type { Dependency } from './define-query.js';
 import { DependencyIndex } from './dependency-index.js';
 import { sql, toStatement, type SqlStatement } from './sql.js';
 import { TickService } from './tick.service.js';
+import { hold } from './view-diff.js';
 import { ViewLoader } from './view-loader.js';
 import { ViewRegistry } from './view-registry.js';
 import { ViewService } from './view.service.js';
@@ -25,6 +26,8 @@ const ordersDeps: Record<string, Dependency> = {
  */
 class FakeDb {
   matching = new Map<string, number>();
+  /** Extra columns of matching rows, e.g. the item's price joined in. */
+  columns = new Map<string, Record<string, unknown>>();
   orderItem = new Map<string, string>();
   failNext: Error | undefined;
   readonly queries: SqlStatement[] = [];
@@ -39,7 +42,11 @@ class FakeDb {
     const rows = (ids?: unknown) =>
       [...this.matching]
         .filter(([id]) => !ids || (ids as string[]).includes(id))
-        .map(([id, version]) => ({ id, version: String(version) }));
+        .map(([id, version]) => ({
+          id,
+          version: String(version),
+          ...this.columns.get(id),
+        }));
     if (stmt.text.startsWith('SELECT q.id')) {
       return Promise.resolve(rows(stmt.values.at(-1)));
     }
@@ -79,7 +86,7 @@ function setup() {
     );
     dependencies.add(key, 'orders', ordersDeps);
     for (const [id, version] of Object.entries(ids)) {
-      view.ids.set(id, version);
+      hold(view, { id, version });
     }
     view.loaded = true;
     const sent: ViewEvent[] = [];
@@ -112,12 +119,17 @@ describe('TickService', () => {
       {
         type: 'delta',
         seq: 1,
-        data: { added: ['b'], updated: [], removed: [], total: 2 },
+        data: {
+          added: [{ id: 'b', version: 2 }],
+          updated: [],
+          removed: [],
+          total: 2,
+        },
       },
     ]);
     expect(ids(view)).toEqual({ a: 1, b: 2 });
     expect(db.queries.at(-1)).toEqual({
-      text: 'SELECT q.id, q.version FROM (SELECT o.id, o.version FROM orders o) q WHERE q.id = ANY($1)',
+      text: 'SELECT q.* FROM (SELECT o.id, o.version FROM orders o) q WHERE q.id = ANY($1)',
       values: [['b']],
     });
   });
@@ -141,7 +153,30 @@ describe('TickService', () => {
     change({ id: 'a', version: 2 });
     await tick.tick();
 
-    expect(sent[0].data).toMatchObject({ added: [], updated: ['a'] });
+    expect(sent[0].data).toMatchObject({ added: [], updated: [{ id: 'a' }] });
+  });
+
+  it('sends the full row when a linked item changes a column the order shows', async () => {
+    const { db, tick, open, change } = setup();
+    const { view, sent } = open('v', { a: 1 });
+    db.orderItem.set('a', 'item-1');
+    db.matching.set('a', 1);
+    db.columns.set('a', { item_price: '20.00' });
+
+    change({
+      type: 'items',
+      id: 'item-1',
+      changes: { old: { price: 10 }, new: { price: 20 } },
+    });
+    await tick.tick();
+
+    expect(sent[0].data).toEqual({
+      added: [],
+      updated: [{ id: 'a', version: 1, item_price: '20.00' }],
+      removed: [],
+      total: 1,
+    });
+    expect(view.ids.get('a')).toBe(1);
   });
 
   it('removes a deleted order without a query', async () => {
@@ -190,10 +225,13 @@ describe('TickService', () => {
       },
     ]);
     expect(first.sent[0].data).toMatchObject({
-      added: ['b'],
+      added: [{ id: 'b' }],
       removed: ['a'],
     });
-    expect(second.sent[0].data).toMatchObject({ added: ['b'], removed: [] });
+    expect(second.sent[0].data).toMatchObject({
+      added: [{ id: 'b' }],
+      removed: [],
+    });
   });
 
   it('retries a stale row next tick instead of applying it', async () => {
@@ -208,7 +246,7 @@ describe('TickService', () => {
 
     db.matching.set('a', 3);
     await tick.tick();
-    expect(sent[0].data).toMatchObject({ updated: ['a'] });
+    expect(sent[0].data).toMatchObject({ updated: [{ id: 'a' }] });
     expect(ids(view)).toEqual({ a: 3 });
   });
 
@@ -226,7 +264,7 @@ describe('TickService', () => {
     await tick.tick();
 
     expect(sent[0].data).toMatchObject({
-      added: ['c'],
+      added: [{ id: 'c' }],
       updated: [],
       removed: ['a'],
       total: 2,
@@ -246,7 +284,7 @@ describe('TickService', () => {
 
     view.loaded = true;
     await tick.tick();
-    expect(sent[0].data).toMatchObject({ added: ['a'] });
+    expect(sent[0].data).toMatchObject({ added: [{ id: 'a' }] });
   });
 
   it('keeps the changes of a failed tick for the next one', async () => {
@@ -261,7 +299,7 @@ describe('TickService', () => {
     expect(buffer.peek().map((e) => e.id)).toEqual(['a']);
 
     await tick.tick();
-    expect(sent[0].data).toMatchObject({ added: ['a'] });
+    expect(sent[0].data).toMatchObject({ added: [{ id: 'a' }] });
   });
 
   it('does nothing for a change no view depends on', async () => {

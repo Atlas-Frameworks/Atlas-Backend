@@ -37,7 +37,8 @@ interface ViewWork {
 /**
  * Every tick: takes the changes the feed collected, finds the views they may
  * affect, re-checks only the changed ids against each view's own SQL, and
- * sends each view's differences to its listeners as one `delta` event.
+ * sends each view's differences to its listeners as one `delta` event, with
+ * the full rows the re-check returned (nothing is read twice).
  * A tick that runs long delays the next one; the next one then takes
  * everything collected meanwhile.
  */
@@ -210,14 +211,14 @@ export class TickService implements OnApplicationBootstrap, OnModuleDestroy {
       return;
     }
     const diff = emptyDiff();
-    applyDeletes(view.ids, todo.deleted, diff);
+    applyDeletes(view, todo.deleted, diff);
     for (const id of todo.deleted) {
       todo.recheck.delete(id);
     }
     if (todo.recheck.size > 0) {
-      const rows = await this.loader.recheck(view, [...todo.recheck.keys()]);
+      const rows = await this.loader.fetchByIds(view, [...todo.recheck.keys()]);
       this.stats.rechecked += todo.recheck.size;
-      const retry = applyRecheck(view.ids, todo.recheck, rows, diff);
+      const retry = applyRecheck(view, todo.recheck, rows, diff);
       this.stats.retried += retry.size;
       for (const [id, version] of retry) {
         this.markDirty(view.viewKey, id, version);
@@ -234,7 +235,7 @@ export class TickService implements OnApplicationBootstrap, OnModuleDestroy {
     const rows = await this.loader.fetchAll(view);
     this.stats.reloaded += 1;
     const diff = emptyDiff();
-    applyFull(view.ids, rows, diff);
+    applyFull(view, rows, diff);
     this.send(view, diff);
   }
 

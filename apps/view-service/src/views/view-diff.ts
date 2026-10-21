@@ -1,16 +1,26 @@
-/** One row of a view's query: a matching entity and its version. */
-export interface VersionRow {
-  id: string;
-  version: number;
+import { createHash } from 'node:crypto';
+
+/** One row of a view's query: `id`, `version`, and the columns the developer selected. */
+export type Row = { id: string; version: number } & Record<string, unknown>;
+
+/**
+ * What a view keeps per entity. No row data: only what is needed to tell
+ * whether a row it sees again has changed.
+ */
+export interface Membership {
+  /** id → version. */
+  readonly ids: Map<string, number>;
+  /** id → hash of the row last seen. A changed column, also one joined from a related entity, changes it. */
+  readonly hashes: Map<string, number>;
 }
 
 /** What changed in a view in one tick. Sent to clients as one `delta` event. */
 export interface ViewDiff {
-  /** Now matches, and wasn't in the view. */
-  added: string[];
-  /** Still matches, with a newer version. */
-  updated: string[];
-  /** No longer matches, or was deleted. */
+  /** Now matches, and wasn't in the view: the full row. */
+  added: Row[];
+  /** Still matches, and the row changed: the full row. */
+  updated: Row[];
+  /** No longer matches, or was deleted: the id. */
   removed: string[];
 }
 
@@ -23,14 +33,29 @@ export const emptyDiff = (): ViewDiff => ({
 export const isEmpty = (diff: ViewDiff): boolean =>
   diff.added.length + diff.updated.length + diff.removed.length === 0;
 
+/** 48 bits of the row's SHA-1: fits a number, and a collision is not a practical concern. */
+export function hashRow(row: Row): number {
+  return createHash('sha1')
+    .update(JSON.stringify(row))
+    .digest()
+    .readUIntBE(0, 6);
+}
+
+/** Stores a row the view now holds. */
+export function hold(view: Membership, row: Row): void {
+  view.ids.set(row.id, row.version);
+  view.hashes.set(row.id, hashRow(row));
+}
+
 /** Removes deleted entities from the view. No query is needed. */
 export function applyDeletes(
-  ids: Map<string, number>,
+  view: Membership,
   deleted: Iterable<string>,
   diff: ViewDiff,
 ): void {
   for (const id of deleted) {
-    if (ids.delete(id)) {
+    if (view.ids.delete(id)) {
+      view.hashes.delete(id);
       diff.removed.push(id);
     }
   }
@@ -43,22 +68,22 @@ export function applyDeletes(
  * that is behind: it is left out and returned in `retry`, for the next tick.
  */
 export function applyRecheck(
-  ids: Map<string, number>,
+  view: Membership,
   expected: ReadonlyMap<string, number>,
-  rows: readonly VersionRow[],
+  rows: readonly Row[],
   diff: ViewDiff,
 ): Map<string, number> {
-  const matching = new Map<string, number>();
+  const matching = new Map<string, Row>();
   for (const row of rows) {
-    matching.set(row.id, row.version);
+    matching.set(row.id, row);
   }
   const retry = new Map<string, number>();
   for (const [id, minVersion] of expected) {
-    const version = matching.get(id);
-    if (version !== undefined && version < minVersion) {
+    const row = matching.get(id);
+    if (row && row.version < minVersion) {
       retry.set(id, minVersion);
     } else {
-      apply(ids, id, version, diff);
+      apply(view, id, row, diff);
     }
   }
   return retry;
@@ -66,40 +91,46 @@ export function applyRecheck(
 
 /** Replaces the view's ids with the result of its full query. */
 export function applyFull(
-  ids: Map<string, number>,
-  rows: readonly VersionRow[],
+  view: Membership,
+  rows: readonly Row[],
   diff: ViewDiff,
 ): void {
   const matching = new Set<string>();
   for (const row of rows) {
     matching.add(row.id);
-    apply(ids, row.id, row.version, diff);
+    apply(view, row.id, row, diff);
   }
-  for (const id of ids.keys()) {
+  for (const id of view.ids.keys()) {
     if (!matching.has(id)) {
-      apply(ids, id, undefined, diff);
+      apply(view, id, undefined, diff);
     }
   }
 }
 
-/** `version` is the matching row's version, or undefined when it doesn't match. */
+/** `row` is the matching row, or undefined when the id doesn't match. */
 function apply(
-  ids: Map<string, number>,
+  view: Membership,
   id: string,
-  version: number | undefined,
+  row: Row | undefined,
   diff: ViewDiff,
 ): void {
-  const held = ids.get(id);
-  if (version === undefined) {
+  const held = view.ids.get(id);
+  if (!row) {
     if (held !== undefined) {
-      ids.delete(id);
+      view.ids.delete(id);
+      view.hashes.delete(id);
       diff.removed.push(id);
     }
   } else if (held === undefined) {
-    ids.set(id, version);
-    diff.added.push(id);
-  } else if (version > held) {
-    ids.set(id, version);
-    diff.updated.push(id);
+    hold(view, row);
+    diff.added.push(row);
+  } else if (row.version >= held) {
+    // An older row than the one held is a lagging replica: keep what we have.
+    const hash = hashRow(row);
+    if (row.version > held || hash !== view.hashes.get(id)) {
+      view.ids.set(id, row.version);
+      view.hashes.set(id, hash);
+      diff.updated.push(row);
+    }
   }
 }

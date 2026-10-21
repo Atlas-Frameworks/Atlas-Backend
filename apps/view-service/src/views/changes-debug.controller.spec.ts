@@ -60,7 +60,8 @@ describe('GET /changes', () => {
         id: 'order-2',
         version: 5,
         typeSeq: 3,
-        changes: { old: { name: 'a' }, new: { name: 'b' } },
+        // A field no query reads or sends.
+        changes: { old: { note: 'a' }, new: { note: 'b' } },
       }),
     );
 
@@ -87,7 +88,7 @@ describe('GET /changes', () => {
         },
         {
           id: 'order-2',
-          fields: ['name'],
+          fields: ['note'],
           candidates: { own: [], linked: [] },
         },
       ],

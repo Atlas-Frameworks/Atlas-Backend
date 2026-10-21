@@ -1,14 +1,23 @@
 import { defineQuery, type Dependency } from '../views/define-query.js';
 import { empty, sql, whereAll, type Sql } from '../views/sql.js';
 
-/** Both queries read the order's item and customer, and the item's type and price. */
+/**
+ * Both queries filter on, or send, the order's name, item and customer and
+ * the item's type and price. Every column sent must be listed here, or a
+ * change to it isn't re-checked and clients don't get it.
+ */
 const ordersDependsOn: Record<string, Dependency> = {
-  orders: { fields: ['item_id', 'customer_id'] },
+  orders: { fields: ['name', 'item_id', 'customer_id'] },
   items: {
     fields: ['type', 'price'],
     link: (ids) => sql`SELECT o.id FROM orders o WHERE o.item_id = ANY(${ids})`,
   },
 };
+
+/** The row clients get for an order. */
+const orderColumns = sql`
+  o.id, o.version, o.name, o.customer_id, o.item_id,
+  i.type AS item_type, i.price AS item_price`;
 
 export interface OrdersSearchParams {
   types?: string[];
@@ -37,7 +46,7 @@ export const ordersSearch = defineQuery({
       where.push(sql`o.customer_id = ${p.customerId}`);
     }
     return sql`
-      SELECT o.id, o.version
+      SELECT ${orderColumns}
       FROM orders o
       JOIN items i ON i.id = o.item_id
       ${whereAll(where)}`;
@@ -55,7 +64,7 @@ export const customerOrders = defineQuery({
   entityType: 'orders',
   dependsOn: ordersDependsOn,
   build: (p: CustomerOrdersParams) => sql`
-    SELECT o.id, o.version
+    SELECT ${orderColumns}
     FROM orders o
     JOIN items i ON i.id = o.item_id
     WHERE o.customer_id = ${p.customerId}

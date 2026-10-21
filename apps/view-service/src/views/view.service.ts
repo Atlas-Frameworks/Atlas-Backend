@@ -10,6 +10,7 @@ import { DependencyIndex } from './dependency-index.js';
 import { toStatement } from './sql.js';
 import { ViewLoader } from './view-loader.js';
 import { ViewRegistry } from './view-registry.js';
+import type { Row } from './view-diff.js';
 import type { View, ViewEvent, ViewListener } from './view.js';
 
 /**
@@ -18,12 +19,12 @@ import type { View, ViewEvent, ViewListener } from './view.js';
  */
 export const CLOSE_AFTER_MS = 60_000;
 
-/** What a route returns after opening a view. */
+/** What a route returns after opening a view, and the first event of its stream. */
 export interface ViewSnapshot {
   viewKey: string;
   seq: number;
   total: number;
-  ids: string[];
+  rows: Row[];
 }
 
 /**
@@ -61,16 +62,16 @@ export class ViewService implements OnModuleDestroy {
         Object.keys(this.dependencies.dependenciesOf(view.viewKey)!),
       );
       await this.loader.ensureLoaded(view);
+      return await this.snapshot(view);
     } catch (err) {
-      this.closeWhenIdle(view);
-      this.logger.error(`loading view ${view.viewKey} failed`, err);
+      this.logger.error(`opening view ${view.viewKey} failed`, err);
       throw new ServiceUnavailableException({
         code: 'RETRY',
         message: 'could not load the view, try again',
       });
+    } finally {
+      this.closeWhenIdle(view);
     }
-    this.closeWhenIdle(view);
-    return this.snapshot(view);
   }
 
   /** A client started streaming the view: it stays open. */
@@ -110,14 +111,17 @@ export class ViewService implements OnModuleDestroy {
     }
   }
 
-  /** The view's current ids, at its current seq. */
-  snapshot(view: View): ViewSnapshot {
-    return {
-      viewKey: view.viewKey,
-      seq: view.seq,
-      total: view.ids.size,
-      ids: [...view.ids.keys()],
-    };
+  /**
+   * The view's rows at its current seq. The ids and seq are taken at the
+   * call; the rows are then read by id. A row may already be newer than seq,
+   * or gone: the deltas after seq bring the client to the same state.
+   */
+  snapshot(view: View): Promise<ViewSnapshot> {
+    const { viewKey, seq } = view;
+    const total = view.ids.size;
+    return this.loader
+      .fetchByIds(view, [...view.ids.keys()])
+      .then((rows) => ({ viewKey, seq, total, rows }));
   }
 
   /** Sends an event to everyone streaming the view, numbered with the next seq. */

@@ -16,14 +16,20 @@ import { DependencyIndex } from './dependency-index.js';
 import type { ViewLoader } from './view-loader.js';
 import { ViewRegistry } from './view-registry.js';
 import { ViewService } from './view.service.js';
+import type { Row } from './view-diff.js';
 import { HEARTBEAT_MS, ViewsController } from './views.controller.js';
 
 describe('ViewsController (observable)', () => {
   function setup() {
     const registry = new ViewRegistry();
+    const loader = {
+      fetchByIds: vi.fn(() =>
+        Promise.resolve<Row[]>([{ id: 'a', version: 1, name: 'x' }]),
+      ),
+    };
     const service = new ViewService(
       registry,
-      {} as ViewLoader,
+      loader as unknown as ViewLoader,
       new DependencyIndex(),
       {} as ChangeFeed,
     );
@@ -35,7 +41,7 @@ describe('ViewsController (observable)', () => {
     const view = registry.open('key', 'orders', { text: 'SELECT', values: [] });
     view.ids.set('a', 1);
     view.loaded = true;
-    return { controller, service, view };
+    return { controller, service, view, loader };
   }
 
   afterEach(() => {
@@ -50,22 +56,44 @@ describe('ViewsController (observable)', () => {
     expect(() => controller.events('key')).toThrow(NotFoundException);
   });
 
-  it('sends a snapshot first, then every published event', () => {
+  it('sends a snapshot with rows first, then events published while the rows were read', async () => {
     const { controller, service, view } = setup();
     const got: MessageEvent[] = [];
 
     const sub = controller.events('key').subscribe((m) => got.push(m));
     service.publish(view, 'test', { n: 1 });
+    expect(got).toEqual([]);
 
+    await vi.waitFor(() => expect(got).toHaveLength(2));
+    service.publish(view, 'test', { n: 2 });
     expect(got).toEqual([
       {
         type: 'snapshot',
         id: '0',
-        data: { viewKey: 'key', seq: 0, total: 1, ids: ['a'] },
+        data: {
+          viewKey: 'key',
+          seq: 0,
+          total: 1,
+          rows: [{ id: 'a', version: 1, name: 'x' }],
+        },
       },
       { type: 'test', id: '1', data: { n: 1 } },
+      { type: 'test', id: '2', data: { n: 2 } },
     ]);
     sub.unsubscribe();
+  });
+
+  it('ends the stream when the rows cannot be read', async () => {
+    const { controller, view, loader } = setup();
+    loader.fetchByIds.mockRejectedValueOnce(new Error('connection lost'));
+
+    const error = new Promise((resolve) =>
+      controller.events('key').subscribe({ error: resolve }),
+    );
+
+    expect(await error).toEqual(new Error('connection lost'));
+    expect(view.listeners.size).toBe(0);
+    clearTimeout(view.closeTimer);
   });
 
   it('removes the listener when the client goes away, starting the close timer', () => {
@@ -151,7 +179,7 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
     );
     expect(stream.res.headers['content-type']).toContain('text/event-stream');
     expect(stream.body).toContain(
-      `data: {"viewKey":"${viewKey}","seq":0,"total":1,"ids":["order-1"]}`,
+      `data: {"viewKey":"${viewKey}","seq":0,"total":1,"rows":[{"id":"order-1","version":2}]}`,
     );
 
     const next = new Promise<string>((resolve) => {
@@ -183,7 +211,7 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
           closesAt: expect.any(String),
           listeners: 0,
           dependsOn: {
-            orders: { fields: ['item_id', 'customer_id'] },
+            orders: { fields: ['name', 'item_id', 'customer_id'] },
             items: {
               fields: ['type', 'price'],
               link: 'SELECT o.id FROM orders o WHERE o.item_id = ANY($1)',

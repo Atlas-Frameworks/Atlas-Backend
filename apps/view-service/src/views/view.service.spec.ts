@@ -2,6 +2,7 @@ import type { ChangeFeed } from '../changes/change-feed.js';
 import type { QueryDefinition } from './define-query.js';
 import { DependencyIndex } from './dependency-index.js';
 import { sql } from './sql.js';
+import { hold } from './view-diff.js';
 import type { ViewLoader } from './view-loader.js';
 import { ViewRegistry } from './view-registry.js';
 import { CLOSE_AFTER_MS, ViewService } from './view.service.js';
@@ -9,28 +10,42 @@ import type { View, ViewEvent, ViewListener } from './view.js';
 
 function setup() {
   const registry = new ViewRegistry();
+  const loader = {
+    fetchByIds: vi.fn((_view: View, ids: string[]) =>
+      Promise.resolve(ids.map((id) => ({ id, version: 9, name: id }))),
+    ),
+  };
   const service = new ViewService(
     registry,
-    {} as ViewLoader,
+    loader as unknown as ViewLoader,
     new DependencyIndex(),
     {} as ChangeFeed,
   );
   const view = registry.open('key', 'orders', { text: 'SELECT', values: [] });
-  view.ids.set('a', 1).set('b', 2);
-  return { service, view };
+  hold(view, { id: 'a', version: 1 });
+  hold(view, { id: 'b', version: 2 });
+  return { service, view, loader };
 }
 
 describe('ViewService', () => {
-  it('takes a snapshot of the ids at the current seq', () => {
-    const { service, view } = setup();
+  it('takes a snapshot of the rows of the ids held, at the current seq', async () => {
+    const { service, view, loader } = setup();
     view.nextSeq();
 
-    expect(service.snapshot(view)).toEqual({
+    const snapshot = service.snapshot(view);
+    view.nextSeq();
+    view.ids.set('c', 1);
+
+    expect(await snapshot).toEqual({
       viewKey: 'key',
       seq: 1,
       total: 2,
-      ids: ['a', 'b'],
+      rows: [
+        { id: 'a', version: 9, name: 'a' },
+        { id: 'b', version: 9, name: 'b' },
+      ],
     });
+    expect(loader.fetchByIds).toHaveBeenCalledWith(view, ['a', 'b']);
   });
 
   it('sends each published event to every listener with the next seq', () => {
@@ -83,6 +98,7 @@ describe('ViewService closing views', () => {
         view.loaded = true;
         return Promise.resolve();
       }),
+      fetchByIds: vi.fn(() => Promise.resolve([])),
     };
     const feed = { watch: vi.fn(() => Promise.resolve()), unwatch: vi.fn() };
     const service = new ViewService(

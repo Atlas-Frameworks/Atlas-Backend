@@ -35,8 +35,15 @@ describe('example OrdersController', () => {
     await app.close();
   });
 
-  function lastSql(): { text: string; values: unknown[] } {
-    return db.query.mock.calls.at(-1)![0];
+  type Stmt = { text: string; values: unknown[] };
+  const isRowFetch = (stmt: Stmt) => stmt.text.startsWith('SELECT q.*');
+
+  /** The last full query a view ran (not the rows read by id for a snapshot). */
+  function lastSql(): Stmt {
+    return db.query.mock.calls
+      .map(([stmt]) => stmt as Stmt)
+      .filter((stmt) => !isRowFetch(stmt))
+      .at(-1)!;
   }
 
   it('opens a view with only the conditions that were sent', async () => {
@@ -48,7 +55,10 @@ describe('example OrdersController', () => {
       viewKey: expect.stringMatching(/^[0-9a-f]{32}$/),
       seq: 0,
       total: 2,
-      ids: ['order-1', 'order-2'],
+      rows: [
+        { id: 'order-1', version: 2 },
+        { id: 'order-2', version: 1 },
+      ],
     });
     expect(lastSql().text).toMatch(
       /WHERE i\.type = ANY\(\$1\) AND i\.price >= \$2$/,
@@ -71,7 +81,10 @@ describe('example OrdersController', () => {
     );
 
     expect(second.body.viewKey).toBe(first.body.viewKey);
-    expect(db.query).toHaveBeenCalledTimes(1);
+    const calls = db.query.mock.calls.map(([stmt]) => stmt as Stmt);
+    expect(calls.filter((stmt) => !isRowFetch(stmt))).toHaveLength(1);
+    // Each open reads the snapshot's rows by id.
+    expect(calls.filter(isRowFetch)).toHaveLength(2);
   });
 
   it('opens a different view for a different route with the same params', async () => {
@@ -114,6 +127,19 @@ describe('example OrdersController', () => {
     await request(app.getHttpServer())
       .get('/orders/by-customer/not-a-uuid')
       .expect(400);
+  });
+
+  it('selects the columns clients get, and reads them by id for the snapshot', async () => {
+    await request(app.getHttpServer()).get('/orders?type=book').expect(200);
+
+    const [load, rows] = db.query.mock.calls.map(([stmt]) => stmt as Stmt);
+    expect(load.text).toMatch(
+      /SELECT\s+o\.id, o\.version, o\.name, o\.customer_id, o\.item_id,\s+i\.type AS item_type, i\.price AS item_price\s+FROM orders o/,
+    );
+    expect(rows.text).toBe(
+      `SELECT q.* FROM (${load.text}) q WHERE q.id = ANY($2)`,
+    );
+    expect(rows.values).toEqual([['book'], ['order-1', 'order-2']]);
   });
 
   it('returns 503 RETRY when Postgres fails', async () => {
