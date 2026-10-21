@@ -58,7 +58,10 @@ and the listener only reads the shared Redis Streams. In
 `benchmark_publisher`, the trigger stores a durable raw event and the Publisher
 allocates `typeSeq` after commit. In `benchmark_debezium`, the trigger allocates
 `typeSeq` in the entity transaction and Debezium relays the transient outbox
-record from WAL. Both pipelines write to `changes:<entityType>`.
+record from WAL. Both pipelines write to `changes:<entityType>`. The simulator
+injects a globally increasing source `sequence` from one PostgreSQL sequence
+shared by all entity tables in the selected schema. Gaps within one entity type
+are expected because updates to other types consume values too.
 
 Register a new table in its migration with:
 
@@ -66,6 +69,6 @@ Register a new table in its migration with:
 SELECT register_synced_table('benchmark_publisher.my_new_table');
 ```
 
-The table must have an `id uuid` column. See
+The table must have `id uuid` and non-null `sequence bigint` columns. See
 [the PostgreSQL workflow](../../infra/README.md) and
 [the event contract](../../docs/contracts.md).

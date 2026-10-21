@@ -4,6 +4,12 @@
 CREATE SCHEMA IF NOT EXISTS benchmark_publisher;
 CREATE SCHEMA IF NOT EXISTS benchmark_debezium;
 
+CREATE SEQUENCE IF NOT EXISTS benchmark_publisher.replicator_sequence;
+CREATE SEQUENCE IF NOT EXISTS benchmark_debezium.replicator_sequence;
+
+GRANT USAGE, SELECT, UPDATE ON SEQUENCE benchmark_publisher.replicator_sequence TO atlas_writer;
+GRANT USAGE, SELECT, UPDATE ON SEQUENCE benchmark_debezium.replicator_sequence TO atlas_writer;
+
 GRANT USAGE ON SCHEMA benchmark_publisher TO atlas_writer, atlas_reader, atlas_publisher;
 GRANT USAGE ON SCHEMA benchmark_debezium TO atlas_writer, atlas_reader, debezium;
 
@@ -20,11 +26,12 @@ BEGIN
          SELECT 1
          FROM pg_attribute
          WHERE attrelid = customers_table
-           AND attname = 'name'
+           AND attname = 'sequence'
+           AND atttypid = 'bigint'::regtype
            AND NOT attisdropped
       ) THEN
         RAISE EXCEPTION
-          'Legacy schema % detected. Recreate the benchmark database before applying the isolated commerce setup.',
+          'Schema % does not contain the source sequence contract. Recreate the benchmark database before applying this setup.',
           schema_name;
       END IF;
     END IF;
@@ -36,7 +43,7 @@ CREATE TABLE IF NOT EXISTS benchmark_publisher.customers (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name       text NOT NULL,
   address    text NOT NULL,
-  version    bigint NOT NULL DEFAULT 1,
+  sequence   bigint NOT NULL CHECK (sequence >= 1),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -44,7 +51,7 @@ CREATE TABLE IF NOT EXISTS benchmark_publisher.items (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   price      numeric(12, 2) NOT NULL CHECK (price >= 0),
   type       text NOT NULL,
-  version    bigint NOT NULL DEFAULT 1,
+  sequence   bigint NOT NULL CHECK (sequence >= 1),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -53,7 +60,7 @@ CREATE TABLE IF NOT EXISTS benchmark_publisher.orders (
   name        text NOT NULL,
   item_id     uuid NOT NULL REFERENCES benchmark_publisher.items(id),
   customer_id uuid NOT NULL REFERENCES benchmark_publisher.customers(id),
-  version     bigint NOT NULL DEFAULT 1,
+  sequence    bigint NOT NULL CHECK (sequence >= 1),
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS publisher_orders_item_idx
@@ -65,7 +72,7 @@ CREATE TABLE IF NOT EXISTS benchmark_publisher.distributors (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name       text NOT NULL,
   order_ids  uuid[] NOT NULL DEFAULT ARRAY[]::uuid[],
-  version    bigint NOT NULL DEFAULT 1,
+  sequence   bigint NOT NULL CHECK (sequence >= 1),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS publisher_distributors_order_ids_idx
@@ -75,7 +82,7 @@ CREATE TABLE IF NOT EXISTS benchmark_debezium.customers (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name       text NOT NULL,
   address    text NOT NULL,
-  version    bigint NOT NULL DEFAULT 1,
+  sequence   bigint NOT NULL CHECK (sequence >= 1),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -83,7 +90,7 @@ CREATE TABLE IF NOT EXISTS benchmark_debezium.items (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   price      numeric(12, 2) NOT NULL CHECK (price >= 0),
   type       text NOT NULL,
-  version    bigint NOT NULL DEFAULT 1,
+  sequence   bigint NOT NULL CHECK (sequence >= 1),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -92,7 +99,7 @@ CREATE TABLE IF NOT EXISTS benchmark_debezium.orders (
   name        text NOT NULL,
   item_id     uuid NOT NULL REFERENCES benchmark_debezium.items(id),
   customer_id uuid NOT NULL REFERENCES benchmark_debezium.customers(id),
-  version     bigint NOT NULL DEFAULT 1,
+  sequence    bigint NOT NULL CHECK (sequence >= 1),
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS debezium_orders_item_idx
@@ -104,7 +111,7 @@ CREATE TABLE IF NOT EXISTS benchmark_debezium.distributors (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name       text NOT NULL,
   order_ids  uuid[] NOT NULL DEFAULT ARRAY[]::uuid[],
-  version    bigint NOT NULL DEFAULT 1,
+  sequence   bigint NOT NULL CHECK (sequence >= 1),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS debezium_distributors_order_ids_idx

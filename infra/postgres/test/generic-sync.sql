@@ -20,19 +20,20 @@ $$;
 CREATE TABLE publisher_test_entities (
   id uuid PRIMARY KEY,
   label text NOT NULL,
-  enabled boolean NOT NULL
+  enabled boolean NOT NULL,
+  sequence bigint NOT NULL
 );
 SELECT register_synced_table('public.publisher_test_entities');
 
-INSERT INTO publisher_test_entities (id, label, enabled)
-VALUES ('00000000-0000-0000-0000-000000000102', 'first', true);
+INSERT INTO publisher_test_entities (id, label, enabled, sequence)
+VALUES ('00000000-0000-0000-0000-000000000102', 'first', true, 1);
 
 UPDATE publisher_test_entities
-SET label = 'second'
+SET label = 'second', sequence = 10
 WHERE id = '00000000-0000-0000-0000-000000000102';
 
 UPDATE publisher_test_entities
-SET label = 'second'
+SET label = 'second', sequence = 11
 WHERE id = '00000000-0000-0000-0000-000000000102';
 
 DELETE FROM publisher_test_entities
@@ -54,8 +55,10 @@ BEGIN
     'expected four durable events';
   ASSERT NOT insert_event ? 'typeSeq',
     'business writes must not allocate typeSeq';
-  ASSERT insert_event ->> 'schema' = '2',
-    'insert must use event schema 2';
+  ASSERT insert_event ->> 'schema' = '3',
+    'insert must use event schema 3';
+  ASSERT insert_event ->> 'sequence' = '1',
+    'insert must contain the source sequence';
   ASSERT insert_event -> 'changes' -> 'old' = '{}'::jsonb,
     'insert old values must be empty';
   ASSERT insert_event -> 'changes' -> 'new' =
@@ -67,12 +70,14 @@ BEGIN
     'update must contain only the new changed value';
   ASSERT no_op_event -> 'changes' = '{"old": {}, "new": {}}'::jsonb,
     'no-op update must still emit an empty diff';
-  ASSERT no_op_event ->> 'version' = '3',
-    'no-op update must increment the version';
+  ASSERT no_op_event ->> 'sequence' = '11',
+    'no-op update must contain the injected source sequence';
   ASSERT delete_event ->> 'op' = 'delete',
     'delete operation missing';
   ASSERT NOT delete_event ? 'changes',
     'delete must not contain changes';
+  ASSERT NOT delete_event ? 'sequence',
+    'delete must not contain a source sequence';
 END;
 $$;
 

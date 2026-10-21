@@ -9,18 +9,19 @@ INSERT INTO benchmark_debezium.entity_type_sequence (entity_type)
 VALUES ('customers'), ('items'), ('orders'), ('distributors')
 ON CONFLICT (entity_type) DO NOTHING;
 
-CREATE OR REPLACE FUNCTION benchmark_debezium.manage_entity_version()
+CREATE OR REPLACE FUNCTION benchmark_debezium.validate_entity_sequence()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  IF TG_OP = 'INSERT' THEN
-    NEW.version := 1;
-  ELSE
-    IF NEW.id IS DISTINCT FROM OLD.id THEN
-      RAISE EXCEPTION 'Changing the id of a synchronized entity is not supported';
-    END IF;
-    NEW.version := OLD.version + 1;
+  IF NEW.sequence IS NULL OR NEW.sequence < 1 THEN
+    RAISE EXCEPTION 'A synchronized entity requires a positive source sequence';
+  END IF;
+  IF TG_OP = 'UPDATE' AND NEW.id IS DISTINCT FROM OLD.id THEN
+    RAISE EXCEPTION 'Changing the id of a synchronized entity is not supported';
+  END IF;
+  IF TG_OP = 'UPDATE' AND NEW.sequence <= OLD.sequence THEN
+    RAISE EXCEPTION 'Source sequence must increase: old %, new %', OLD.sequence, NEW.sequence;
   END IF;
   NEW.updated_at := now();
   RETURN NEW;
@@ -37,12 +38,15 @@ DECLARE
   old_row jsonb := CASE WHEN TG_OP = 'INSERT' THEN '{}'::jsonb ELSE to_jsonb(OLD) END;
   new_row jsonb := CASE WHEN TG_OP = 'DELETE' THEN '{}'::jsonb ELSE to_jsonb(NEW) END;
   entity_id uuid;
-  entity_version bigint;
+  entity_sequence bigint;
   event_sequence bigint;
   event_id uuid := gen_random_uuid();
 BEGIN
   entity_id := COALESCE(new_row ->> 'id', old_row ->> 'id')::uuid;
-  entity_version := COALESCE(new_row ->> 'version', old_row ->> 'version')::bigint;
+  entity_sequence := CASE
+    WHEN TG_OP = 'DELETE' THEN NULL
+    ELSE (new_row ->> 'sequence')::bigint
+  END;
 
   UPDATE benchmark_debezium.entity_type_sequence AS sequence
   SET seq = sequence.seq + 1
@@ -58,16 +62,18 @@ BEGIN
     resolved_entity_type,
     entity_id::text,
     jsonb_build_object(
-      'schema', 2,
+      'schema', 3,
       'type', resolved_entity_type,
       'id', entity_id,
       'op', CASE WHEN TG_OP = 'DELETE' THEN 'delete' ELSE 'upsert' END,
-      'version', entity_version,
       'typeSeq', event_sequence,
       'committedAt', clock_timestamp()
     ) || CASE
       WHEN TG_OP = 'DELETE' THEN '{}'::jsonb
-      ELSE jsonb_build_object('changes', public.build_entity_changes(old_row, new_row))
+      ELSE jsonb_build_object(
+        'sequence', entity_sequence,
+        'changes', public.build_entity_changes(old_row, new_row)
+      )
     END;
 
   EXECUTE format('DELETE FROM %s WHERE id = $1', outbox_table) USING event_id;
@@ -106,13 +112,17 @@ BEGIN
       entity_type
     );
     EXECUTE format(
+      'DROP TRIGGER IF EXISTS atlas_validate_sequence ON benchmark_debezium.%I',
+      entity_type
+    );
+    EXECUTE format(
       'DROP TRIGGER IF EXISTS atlas_sync_change ON benchmark_debezium.%I',
       entity_type
     );
     EXECUTE format(
-      'CREATE TRIGGER atlas_manage_version
+      'CREATE TRIGGER atlas_validate_sequence
        BEFORE INSERT OR UPDATE ON benchmark_debezium.%I
-       FOR EACH ROW EXECUTE FUNCTION benchmark_debezium.manage_entity_version()',
+       FOR EACH ROW EXECUTE FUNCTION benchmark_debezium.validate_entity_sequence()',
       entity_type
     );
     EXECUTE format(

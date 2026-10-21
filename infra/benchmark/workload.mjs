@@ -111,16 +111,20 @@ async function updateEntity(options, updateStatements, eventIndex) {
 function buildUpdateStatements(schema) {
   return {
     customers: `UPDATE ${schema}.customers
-      SET address = format('benchmark-%s-%s', $1::text, $2::integer)
+      SET address = format('benchmark-%s-%s', $1::text, $2::integer),
+          sequence = nextval('${schema}.replicator_sequence')
       WHERE id = $3::uuid`,
     items: `UPDATE ${schema}.items
-      SET type = format('benchmark-%s-%s', $1::text, $2::integer)
+      SET type = format('benchmark-%s-%s', $1::text, $2::integer),
+          sequence = nextval('${schema}.replicator_sequence')
       WHERE id = $3::uuid`,
     orders: `UPDATE ${schema}.orders
-      SET name = format('benchmark-%s-%s', $1::text, $2::integer)
+      SET name = format('benchmark-%s-%s', $1::text, $2::integer),
+          sequence = nextval('${schema}.replicator_sequence')
       WHERE id = $3::uuid`,
     distributors: `UPDATE ${schema}.distributors
-      SET name = format('benchmark-%s-%s', $1::text, $2::integer)
+      SET name = format('benchmark-%s-%s', $1::text, $2::integer),
+          sequence = nextval('${schema}.replicator_sequence')
       WHERE id = $3::uuid`,
   };
 }

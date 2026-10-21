@@ -38,7 +38,7 @@ Turns [contracts.md](../../contracts.md) §1, §3 and §4 into code that every c
 
 - [ ] `npm run build -w @atlas/protocol` generates and compiles from a clean clone with no global tools; `buf` comes in as an npm dependency (`@bufbuild/buf`).
 - [ ] The browser bundle of `@atlas/protocol` works under a strict Content Security Policy (no `eval` or `new Function`). protobuf-es satisfies this.
-- [ ] README updated with the schema rules (never renumber fields, the version policy).
+- [ ] README updated with the schema rules (never renumber fields, the source-sequence policy).
 
 ---
 
@@ -46,7 +46,7 @@ Turns [contracts.md](../../contracts.md) §1, §3 and §4 into code that every c
 
 - **Depends on:** nothing
 - **Size:** S
-- **Files:** `packages/protocol/schema/outbox-event.v2.json`, `packages/protocol/src/outbox.ts`
+- **Files:** `packages/protocol/schema/outbox-event.v3.json`, `packages/protocol/src/outbox.ts`
 
 **Goal.** The replicator writes, and the workers read, exactly the event shape in contracts §1.
 
@@ -62,5 +62,5 @@ Turns [contracts.md](../../contracts.md) §1, §3 and §4 into code that every c
 
 **Acceptance criteria**
 
-- [ ] Rejects a missing `typeSeq`, `version` or `op`, and an unknown `schema` version.
+- [ ] Rejects a missing `typeSeq` or `op`, a missing `sequence` on upsert, a `sequence` on delete, and an unknown `schema` version.
 - [ ] Benchmark result recorded in the PR.

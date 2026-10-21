@@ -52,7 +52,8 @@ const jobs = [
         LIMIT (1 + floor(random() * ${maxUpdates}))::integer
       ), updated AS (
         UPDATE ${targetSchema}.items AS item
-        SET price = round((5 + random() * 495)::numeric, 2)
+        SET price = round((5 + random() * 495)::numeric, 2),
+            sequence = nextval('${targetSchema}.replicator_sequence')
         FROM selected
         WHERE item.id = selected.id
         RETURNING item.id
@@ -74,7 +75,8 @@ const jobs = [
           '%s %s Street',
           1 + floor(random() * 999)::integer,
           (ARRAY['Atlas', 'Market', 'Oak', 'River', 'Sunset'])[1 + floor(random() * 5)::integer]
-        )
+        ),
+            sequence = nextval('${targetSchema}.replicator_sequence')
         FROM selected
         WHERE customer.id = selected.id
         RETURNING customer.id
@@ -109,7 +111,8 @@ const jobs = [
       ), updated AS (
         UPDATE ${targetSchema}.orders AS customer_order
         SET item_id = replacements.item_id,
-            customer_id = replacements.customer_id
+            customer_id = replacements.customer_id,
+            sequence = nextval('${targetSchema}.replicator_sequence')
         FROM replacements
         WHERE customer_order.id = replacements.id
           AND replacements.item_id IS NOT NULL
@@ -135,7 +138,8 @@ const jobs = [
           WHERE customer_order.id IS DISTINCT FROM distributor.id
           ORDER BY random()
           LIMIT (1 + floor(random() * 20))::integer
-        )
+        ),
+            sequence = nextval('${targetSchema}.replicator_sequence')
         FROM selected
         WHERE distributor.id = selected.id
         RETURNING distributor.id

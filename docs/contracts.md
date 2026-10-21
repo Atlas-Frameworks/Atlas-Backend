@@ -6,15 +6,15 @@ The full design and its reasoning are in [architecture-plan.md](architecture-pla
 
 ## 1. Outbox event payload (replicator → outbox → Debezium → Redis)
 
-Written by the database synchronization trigger in the same transaction as the entity change. Debezium's Outbox Event Router copies `payload` into the stream entry `changes:<aggregatetype>`. JSON schema file: `packages/protocol/schema/outbox-event.v2.json` (task P-02).
+Written by the database synchronization trigger in the same transaction as the entity change. Debezium's Outbox Event Router copies `payload` into the stream entry `changes:<aggregatetype>`. JSON schema file: `packages/protocol/schema/outbox-event.v3.json` (task P-02).
 
 ```json
 {
-  "schema": 2,
+  "schema": 3,
   "type": "items",
   "id": "7f1c2a9e-...-uuid",
   "op": "upsert",
-  "version": 42,
+  "sequence": 918260,
   "typeSeq": 918273,
   "committedAt": "2026-10-20T10:15:03.123Z",
   "changes": {
@@ -27,9 +27,14 @@ Written by the database synchronization trigger in the same transaction as the e
 | Field | Meaning |
 | --- | --- |
 | `op` | `upsert` or `delete`. A delete contains the entity `id` and no `changes`; consumers remove that ID from every local result that contains it. |
-| `version` | Entity version, incremented on every update, including an update that writes the same business values. Consumers ignore versions they already applied. |
+| `sequence` | Source-system sequence carried by every upsert. It is globally increasing at the source but may have gaps because Atlas replicates only a subset. Consumers keep the highest value per `(type, id)`. Deletes omit it. |
 | `typeSeq` | Gapless, commit-ordered sequence per entity type (from `entity_type_sequence`). A gap means a lost event: reload that type's views. |
-| `changes` | Present on `upsert` only. On insert, `new` contains every business field and `old` is empty. On update, each object contains only fields whose values differ. A no-op update carries two empty objects. Technical fields `id`, `version`, and `updated_at` are excluded. |
+| `changes` | Present on `upsert` only. On insert, `new` contains every business field and `old` is empty. On update, each object contains only fields whose values differ. A no-op update carries two empty objects. Technical fields `id`, `sequence`, and `updated_at` are excluded. |
+
+A delete contains only the common envelope (`schema`, `type`, `id`, `op`,
+`typeSeq`, and `committedAt`). It contains neither `sequence` nor `changes`.
+The replicator must therefore preserve source order when applying deletes; an
+old delete cannot be rejected later by comparing a source sequence.
 
 ## 2. Redis keys
 

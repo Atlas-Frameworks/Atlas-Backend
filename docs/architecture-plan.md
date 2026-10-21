@@ -19,7 +19,7 @@ Four rules keep the design reliable and maintainable:
 
 1. **Postgres is the only source of truth.** Every other component can be wiped and rebuilt from it.
 2. **In-memory state exists only while someone uses it.** Each view, page or subscription lives while a user is subscribed, plus a 60 s grace period.
-3. **Every event and message carries a version or sequence number,** so duplicates are harmless and gaps are detected.
+3. **Every upsert carries its source sequence and every event carries `typeSeq`,** so stale updates and duplicates are harmless and stream gaps are detected.
 4. **One codebase and one deployment** for the view service. One shared protocol schema generates both server and client types.
 
 Terms used below:
@@ -88,12 +88,11 @@ Build rules that keep Node fast:
 The replicator writes each entity and its change event in the same database transaction. Debezium Server reads the event from Postgres's change log and adds it to Redis, so a committed change always produces an event and there is no relay code to maintain.
 
 1. **Every entity type emits events.** This includes types users never see on the map, such as countries and connections. Any entity a filter can refer to must emit events, or views depending on it go stale.
-2. **Entity version.** Every root entity table gets a `version bigint` column. The replicator increments it in the same transaction whenever any part of the entity changes, including nested child rows.
-   - Do not use the third-party `updatedAt` as the version. Its values can tie or go backwards.
+2. **Source sequence.** Every root entity table stores the source system's globally increasing `sequence bigint`. The replicator copies it in the same transaction whenever any part of the entity changes, including nested child rows. Gaps are normal because Atlas replicates only a subset of source entities. Deletes omit `sequence` from the event and must be applied in source order.
 3. **Outbox table,** in Debezium's outbox format.
    - Columns: `id`, `aggregatetype` (entity type), `aggregateid` (entity UUID), `payload jsonb`.
    - The payload holds:
-     - version and operation;
+     - source sequence (for upserts) and operation;
      - a sequence number per entity type, increasing by 1 per event, so consumers can spot a lost event;
      - a generic `changes` diff. Inserts carry every business field in `new`;
        updates carry only differing fields in `old` and `new`, including fields
@@ -113,7 +112,7 @@ The replicator writes each entity and its change event in the same database tran
    - **Heartbeat:** `heartbeat.interval.ms` with `heartbeat.action.query=SELECT pg_logical_emit_message(false,'heartbeat',now()::varchar)`, so the replication slot keeps advancing when nothing changes.
    - **Redis sink:** `wait.enabled=true` and `wait.retry.enabled=true`. With retry off, a failed replica wait only logs a warning. The sink's replica check misbehaves with 2 or more replicas, so run Redis with one replica or test the setup first. On Redis itself, set min-replicas-to-write 1 and append-only persistence with appendfsync everysec. On the connector, set offset.mismatch.strategy=trust\_offset so a gap after a database failover fails loudly instead of silently.
 5. **Debezium needs a stable Redis address.** Its Redis sink does not support Sentinel: after a Redis failover it keeps writing to the old master. Put a small proxy that always points at the current master in front of Redis (for example HAProxy with a role check), and test a failover.
-6. **One Debezium instance.** A replication slot serves one reader, so run one pod with the Recreate rollout strategy, a generous shutdown grace period, and the Patroni primary Service as its database address. Delivery is at least once: after a restart it may resend events, which workers ignore by version.
+6. **One Debezium instance.** A replication slot serves one reader, so run one pod with the Recreate rollout strategy, a generous shutdown grace period, and the Patroni primary Service as its database address. Delivery is at least once: after a restart it may resend events, which workers ignore by source sequence and `typeSeq`.
 7. **Replication slot safety:**
    - **Use Postgres 17 failover slots,** not Patroni's permanent slots. On Postgres 16 those are copied on a timer, and a tested failover lost committed rows. Settings:
      - Debezium `slot.failover=true`;
@@ -146,14 +145,14 @@ Each tick, a worker re-checks only the changed IDs against each affected view it
 
 ### State per view
 
-- **Membership map:** ID to version, group values and sort value, about 50 bytes per entity.
+- **Membership map:** ID to source sequence, group values and sort value, about 50 bytes per entity.
 - **Per layout:** a group tree with counts, and a sorted index per group that returns any range of positions directly.
 - **Subscribing workers,** and a sequence number per view, page and detail subscription.
 
 ### Building a view
 
 1. Record the current stream position for each entity type the view reads.
-2. Run the full query `SELECT id, version, <group fields>, <sort field> WHERE <filters, including scope>`.
+2. Run the full query `SELECT id, sequence, <group fields>, <sort field> WHERE <filters, including scope>`.
 3. Fill the membership map and the indexes.
 4. Apply all events from the recorded position onward. This is safe because applying an event twice changes nothing.
 
@@ -165,7 +164,7 @@ Every 500 ms to 1 s, per entity type:
 
 1. **Read** new stream events.
    - Check each stream's per-type sequence number. A gap means an event was lost, so reload the views of that type from Postgres.
-   - If an ID appears several times, keep only its highest version.
+   - If an ID appears several times, keep only its highest source sequence. Deletes stay ordered by `typeSeq`.
 2. **Deletes:** remove the ID from every owned view that holds it. No query is needed.
 3. **Candidates:** each view declares the entity fields and relationships it
    depends on. Workers compare those declarations with the keys in
@@ -174,13 +173,13 @@ Every 500 ms to 1 s, per entity type:
    IDs. Deletes remove the ID from every view that currently holds it.
 4. **Replica freshness.** At the start of the tick, read the primary's current change-log position (`pg_current_wal_lsn()`, a cheap call). Every event already read was committed before that position. Wait until the replica's replay position (`pg_last_wal_replay_lsn()`) has reached it, then query.
    - If the replica is more than about 2 s behind, run this tick's queries on the primary.
-   - This covers related rows too (an airport, a country), which the per-entity version check alone cannot.
+   - This covers related rows too (an airport, a country), which the per-entity source-sequence check alone cannot.
 5. **Re-check, batched:** one query per entity type and tick evaluates every candidate view's filter at once.
-   - The query shape is `SELECT id, version, (<filter A>) AS a, (<filter B>) AS b, ..., <group and sort fields> FROM <type> WHERE id = ANY($ids)`.
+   - The query shape is `SELECT id, sequence, (<filter A>) AS a, (<filter B>) AS b, ..., <group and sort fields> FROM <type> WHERE id = ANY($ids)`.
    - Views that share a filter template, differing only in values, pass those values as parameters.
    - A missing row means the entity was deleted.
    - Compiled filter SQL must never throw (for example, guarded casts on JSONB values), because one error would fail the whole batch.
-6. **Version check:** a returned version lower than the event's is retried next tick, as a second guard.
+6. **Source-sequence check:** a returned sequence lower than the upsert event's is retried next tick, as a second guard.
 7. **Diff:**
    - matches and not in the view: add;
    - doesn't match and in the view: remove;
@@ -273,7 +272,7 @@ Rules:
 - **Data sources:**
   - changed map fields come from `changes.new`; unchanged values remain in the
     worker's existing state, and inserts contain the complete business row;
-  - window rows and detail come from the read replica by primary key, with the same version check as re-checks.
+  - window rows and detail come from the read replica by primary key, with the same source-sequence check as re-checks.
 - **Ordering:** the client applies a message only if its `seq` is exactly the last one plus 1. Otherwise it sends `resync`.
 - **Reconnect:**
   - the client retries with jittered backoff from 1 s up to 30 s, then reopens its views;
@@ -463,7 +462,7 @@ No component holds data that exists only in its memory. Postgres is the source o
 | Worker returning after a restart | Nothing | Adds itself to the list after its startup steps. Hashing gives it back a share of views through the normal ownership handover | Those views reload once |
 | Network loss between two workers | In-flight deltas | Stream keepalives detect it within about 10 s. The subscribing worker marks the view stale, reconnects, and takes a snapshot | Stale marker, then reload |
 | Client connection | Nothing on the server side | Jittered reconnect from 1 s up to 30 s to any worker, then resubscribe | Last data stays on screen, marked stale, then a snapshot |
-| Debezium Server | Nothing; unread changes stay in Postgres's change log | OpenShift restarts it. It resumes from its read position stored in Postgres and may resend a few events, which workers ignore by version | Updates pause for the restart time, then catch up |
+| Debezium Server | Nothing; unread changes stay in Postgres's change log | OpenShift restarts it. It resumes from its read position stored in Postgres and may resend a few events, which workers ignore by source sequence and `typeSeq` | Updates pause for the restart time, then catch up |
 | Replicator | Nothing; the entity and its outbox row commit together or not at all | Restarts and resumes polling the third-party sources | Updates pause until it is back |
 | Redis (Sentinel failover) | Possibly the last few stream entries and list renewals | Debezium retries until Redis accepts the events. Workers reconnect, re-register, and continue from their last stream ID. A worker whose last ID is gone rebuilds its views | Updates pause for the failover, usually seconds |
 | Redis, all data lost | All streams and the worker list | Workers re-register within 3 s and detect that their last stream ID is gone, then rebuild all views. Debezium continues from its read position in Postgres | A brief snapshot reload |
@@ -492,10 +491,10 @@ Every known way a view can go stale, leak resources or overload a component has 
 | --- | --- | --- | --- |
 | 1 | Crash between database commit and publish | The change is saved, but no event is sent | Outbox row in the same transaction; Debezium advances its read position only after Redis confirms |
 | 2 | Redis failover loses the newest entries | Redis copies to its replica in the background, so a new primary can miss the last events | Debezium's Redis sink waits for replica confirmation (`wait.enabled`) |
-| 3 | Events repeated or out of order | Debezium resends after restarts | Every event carries `version`; workers ignore versions they have already applied |
+| 3 | Events repeated or out of order | Debezium resends after restarts | Upserts carry the source `sequence` and all events carry `typeSeq`; workers ignore values they have already applied |
 | 4 | A write that bypasses the replicator | Views never hear about the change | Only the replicator's database role can write; any future writer must use the outbox function |
-| 5 | Read replica lag | A re-check reads old data and misses or wrongly keeps an entity | Wait until the replica has replayed past the tick's change-log position; version check as a second guard; use the primary if the replica lags over 2 s |
-| 6 | Nested child row changes | The root entity looks unchanged | The replicator increments the root `version` and emits the root ID for any change in the entity |
+| 5 | Read replica lag | A re-check reads old data and misses or wrongly keeps an entity | Wait until the replica has replayed past the tick's change-log position; source-sequence check as a second guard; use the primary if the replica lags over 2 s |
+| 6 | Nested child row changes | The root entity looks unchanged | The replicator copies a newer source `sequence` to the root and emits the root ID for any change in the entity |
 | 7 | Related-entity changes (airport, country, connection) | Views filtering on them go stale | The registry declares each link; the owner re-checks every linked entity. Every referenced type emits events |
 | 8 | Connection edits are expensive | One edit re-runs the full query of every view using it | Runs share the build queue and cap; per-view timing metric; measured in the load test |
 | 9 | Client reaches different workers over time | Duplicate views and wasted re-checks | Views are owned by hashing, never by the client's connection |
@@ -573,7 +572,7 @@ Capacity estimates. These are my calculations, not measurements; confirm them in
 Build in seven steps, each usable and testable on its own.
 
 1. **Write path:**
-   - add `version` columns;
+   - add source `sequence` columns;
    - write the outbox in the replicator's transactions;
    - configure Debezium Server and the Redis Streams;
    - lock down database write roles.

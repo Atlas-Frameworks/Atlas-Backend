@@ -15,7 +15,7 @@ the Publisher environment:
 
 - `id uuid` as its stable entity identifier;
 - its business columns;
-- `version bigint NOT NULL DEFAULT 1`;
+- `sequence bigint NOT NULL`, supplied by the source replicator;
 - `updated_at timestamptz NOT NULL DEFAULT now()`.
 
 For example:
@@ -25,7 +25,7 @@ CREATE TABLE benchmark_debezium.items (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   price      numeric(12, 2) NOT NULL CHECK (price >= 0),
   type       text NOT NULL,
-  version    bigint NOT NULL DEFAULT 1,
+  sequence   bigint NOT NULL CHECK (sequence >= 1),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ```
@@ -62,17 +62,17 @@ The required functions and triggers are installed by
 
 | Object | Responsibility |
 | --- | --- |
-| `benchmark_debezium.manage_entity_version()` | Sets version `1` on insert and increments it on update |
+| `benchmark_debezium.validate_entity_sequence()` | Requires a positive source sequence and rejects non-increasing updates |
 | `benchmark_debezium.capture_entity_change()` | Locks and increments the entity's sequence row, builds the diff, inserts the complete outbox event, then deletes that outbox row in the same transaction |
-| `public.build_entity_changes(old, new)` | Shared diff helper; excludes `id`, `version`, and `updated_at` |
+| `public.build_entity_changes(old, new)` | Shared diff helper; excludes `id`, `sequence`, and `updated_at` |
 
 Every source table needs these two triggers:
 
 ```sql
-CREATE TRIGGER atlas_manage_version
+CREATE TRIGGER atlas_validate_sequence
 BEFORE INSERT OR UPDATE ON benchmark_debezium.items
 FOR EACH ROW
-EXECUTE FUNCTION benchmark_debezium.manage_entity_version();
+EXECUTE FUNCTION benchmark_debezium.validate_entity_sequence();
 
 CREATE TRIGGER atlas_sync_change
 AFTER INSERT OR UPDATE OR DELETE ON benchmark_debezium.items
@@ -154,11 +154,11 @@ Example update:
 
 ```json
 {
-  "schema": 2,
+  "schema": 3,
   "type": "items",
   "id": "7f1c2a9e-36e7-4f83-a50c-d21497d7628a",
   "op": "upsert",
-  "version": 42,
+  "sequence": 918260,
   "typeSeq": 918273,
   "committedAt": "2026-10-20T10:15:03.123Z",
   "changes": {
@@ -172,20 +172,19 @@ Example delete:
 
 ```json
 {
-  "schema": 2,
+  "schema": 3,
   "type": "items",
   "id": "7f1c2a9e-36e7-4f83-a50c-d21497d7628a",
   "op": "delete",
-  "version": 42,
   "typeSeq": 918274,
   "committedAt": "2026-10-20T10:16:11.456Z"
 }
 ```
 
 On insert, `changes.old` is empty and `changes.new` contains every business
-field. On update, only changed business fields appear. Deletes do not contain
-`changes`. The authoritative contract is
-`packages/protocol/schema/outbox-event.v2.json`.
+field. On update, only changed business fields appear. Deletes contain neither
+`sequence` nor `changes`. The authoritative contract is
+`packages/protocol/schema/outbox-event.v3.json`.
 
 ## Local operation
 

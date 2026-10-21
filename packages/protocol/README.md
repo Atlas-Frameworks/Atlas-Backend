@@ -6,7 +6,7 @@ The single source of truth for every message that crosses a process boundary:
 | --- | --- | --- |
 | `proto/atlas/client/v1/*.proto` | Browser SDK ↔ view-service worker (WebSocket, binary frames) | P-01 |
 | `proto/atlas/cluster/v1/*.proto` | Worker ↔ worker (gRPC) | P-01 |
-| `schema/outbox-event.v2.json` | Database trigger → outbox → Debezium → Redis stream payload | P-02 |
+| `schema/outbox-event.v3.json` | Database trigger → outbox → Debezium → Redis stream payload | P-02 |
 
 Generated TypeScript (protobuf-es) is written to `src/gen/` and is not committed.
 Run `npm run generate -w @atlas/protocol` after changing a `.proto` file.

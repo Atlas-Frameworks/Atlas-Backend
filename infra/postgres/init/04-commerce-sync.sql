@@ -12,8 +12,8 @@ IMMUTABLE
 AS $$
   WITH rows AS (
     SELECT
-      COALESCE(p_old_row, '{}'::jsonb) - ARRAY['id', 'version', 'updated_at'] AS old_row,
-      COALESCE(p_new_row, '{}'::jsonb) - ARRAY['id', 'version', 'updated_at'] AS new_row
+      COALESCE(p_old_row, '{}'::jsonb) - ARRAY['id', 'sequence', 'updated_at'] AS old_row,
+      COALESCE(p_new_row, '{}'::jsonb) - ARRAY['id', 'sequence', 'updated_at'] AS new_row
   ), changed_keys AS (
     SELECT key
     FROM rows,
@@ -34,20 +34,20 @@ AS $$
   LEFT JOIN changed_keys ON true;
 $$;
 
-CREATE OR REPLACE FUNCTION manage_entity_version()
+CREATE OR REPLACE FUNCTION validate_entity_sequence()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  IF TG_OP = 'INSERT' THEN
-    NEW.version := 1;
-  ELSE
-    IF NEW.id IS DISTINCT FROM OLD.id THEN
-      RAISE EXCEPTION 'Changing the id of a synchronized entity is not supported';
-    END IF;
-    NEW.version := OLD.version + 1;
+  IF NEW.sequence IS NULL OR NEW.sequence < 1 THEN
+    RAISE EXCEPTION 'A synchronized entity requires a positive source sequence';
   END IF;
-
+  IF TG_OP = 'UPDATE' AND NEW.id IS DISTINCT FROM OLD.id THEN
+    RAISE EXCEPTION 'Changing the id of a synchronized entity is not supported';
+  END IF;
+  IF TG_OP = 'UPDATE' AND NEW.sequence <= OLD.sequence THEN
+    RAISE EXCEPTION 'Source sequence must increase: old %, new %', OLD.sequence, NEW.sequence;
+  END IF;
   NEW.updated_at := now();
   RETURN NEW;
 END;
@@ -63,10 +63,13 @@ DECLARE
   old_row jsonb := CASE WHEN TG_OP = 'INSERT' THEN '{}'::jsonb ELSE to_jsonb(OLD) END;
   new_row jsonb := CASE WHEN TG_OP = 'DELETE' THEN '{}'::jsonb ELSE to_jsonb(NEW) END;
   entity_id uuid;
-  entity_version bigint;
+  entity_sequence bigint;
 BEGIN
   entity_id := COALESCE(new_row ->> 'id', old_row ->> 'id')::uuid;
-  entity_version := COALESCE(new_row ->> 'version', old_row ->> 'version')::bigint;
+  entity_sequence := CASE
+    WHEN TG_OP = 'DELETE' THEN NULL
+    ELSE (new_row ->> 'sequence')::bigint
+  END;
 
   EXECUTE format(
     'INSERT INTO %s (aggregate_id, payload) VALUES ($1, $2)',
@@ -74,15 +77,17 @@ BEGIN
   ) USING
     entity_id::text,
     jsonb_build_object(
-      'schema', 2,
+      'schema', 3,
       'type', resolved_entity_type,
       'id', entity_id,
       'op', CASE WHEN TG_OP = 'DELETE' THEN 'delete' ELSE 'upsert' END,
-      'version', entity_version,
       'committedAt', clock_timestamp()
     ) || CASE
       WHEN TG_OP = 'DELETE' THEN '{}'::jsonb
-      ELSE jsonb_build_object('changes', build_entity_changes(old_row, new_row))
+      ELSE jsonb_build_object(
+        'sequence', entity_sequence,
+        'changes', build_entity_changes(old_row, new_row)
+      )
     END;
   RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
 END;
@@ -129,11 +134,18 @@ BEGIN
     RAISE EXCEPTION 'Synchronized table %.% must have an id uuid column', schema_name, table_name;
   END IF;
 
-  EXECUTE format(
-    'ALTER TABLE %I.%I ADD COLUMN IF NOT EXISTS version bigint NOT NULL DEFAULT 1',
-    schema_name,
-    table_name
-  );
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_attribute
+    WHERE attrelid = p_table
+      AND attname = 'sequence'
+      AND atttypid = 'bigint'::regtype
+      AND attnotnull
+      AND NOT attisdropped
+  ) THEN
+    RAISE EXCEPTION 'Synchronized table %.% must have a non-null sequence bigint column',
+      schema_name, table_name;
+  END IF;
   EXECUTE format(
     'ALTER TABLE %I.%I ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()',
     schema_name,
@@ -174,10 +186,11 @@ BEGIN
       outbox_table = EXCLUDED.outbox_table;
 
   EXECUTE format('DROP TRIGGER IF EXISTS atlas_manage_version ON %I.%I', schema_name, table_name);
+  EXECUTE format('DROP TRIGGER IF EXISTS atlas_validate_sequence ON %I.%I', schema_name, table_name);
   EXECUTE format('DROP TRIGGER IF EXISTS atlas_sync_change ON %I.%I', schema_name, table_name);
   EXECUTE format(
-    'CREATE TRIGGER atlas_manage_version BEFORE INSERT OR UPDATE ON %I.%I '
-    'FOR EACH ROW EXECUTE FUNCTION manage_entity_version()',
+    'CREATE TRIGGER atlas_validate_sequence BEFORE INSERT OR UPDATE ON %I.%I '
+    'FOR EACH ROW EXECUTE FUNCTION validate_entity_sequence()',
     schema_name,
     table_name
   );

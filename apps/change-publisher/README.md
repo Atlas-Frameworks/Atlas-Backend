@@ -11,7 +11,7 @@ type. The publisher starts one independent loop for each type and performs:
 If the process stops before Redis accepts a batch, the rows remain pending. If
 it stops after Redis accepts a batch but before PostgreSQL deletes it, the batch
 is sent again. Consumers must therefore continue treating delivery as at least
-once and discard duplicates by `version` and `typeSeq`.
+once and discard duplicates by `sequence` and `typeSeq`.
 
 A normal replicator or publisher restart does not reset any table or sequence.
 The publisher lease expires automatically, allowing another instance to take
@@ -74,7 +74,7 @@ Every synchronized entity table must have:
 - an `id uuid` column;
 - a primary key or another application-enforced uniqueness rule for `id`;
 - its business columns;
-- `version bigint NOT NULL DEFAULT 1`;
+- `sequence bigint NOT NULL`, supplied by the source replicator;
 - `updated_at timestamptz NOT NULL DEFAULT now()`.
 
 For example:
@@ -84,7 +84,7 @@ CREATE TABLE benchmark_publisher.items (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   price      numeric(12, 2) NOT NULL CHECK (price >= 0),
   type       text NOT NULL,
-  version    bigint NOT NULL DEFAULT 1,
+  sequence   bigint NOT NULL CHECK (sequence >= 1),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ```
@@ -96,8 +96,8 @@ The shared Publisher infrastructure is installed in `public` by
 | Object | Responsibility |
 | --- | --- |
 | `synchronized_entity_types` | Registry, independent sequence state and publisher lease for every entity type |
-| `build_entity_changes(old, new)` | Builds the business-field diff and excludes `id`, `version`, and `updated_at` |
-| `manage_entity_version()` | Sets version `1` on insert and increments it on every update |
+| `build_entity_changes(old, new)` | Builds the business-field diff and excludes `id`, `sequence`, and `updated_at` |
+| `validate_entity_sequence()` | Requires a positive source sequence and rejects non-increasing updates |
 | `sync_entity_change()` | Appends the raw event to the entity-specific durable outbox in the business transaction |
 | `register_synced_table()` | Creates the outbox, grants permissions, registers the type and attaches both triggers |
 | `claim_sync_events()` | Claims a batch under a lease and assigns `typeSeq` values after commit |
@@ -127,7 +127,7 @@ created_at     timestamptz NOT NULL DEFAULT clock_timestamp()
 It also creates these triggers on the source table:
 
 ```text
-atlas_manage_version  BEFORE INSERT OR UPDATE  -> public.manage_entity_version()
+atlas_validate_sequence BEFORE INSERT OR UPDATE -> public.validate_entity_sequence()
 atlas_sync_change     AFTER INSERT OR UPDATE OR DELETE -> public.sync_entity_change(...)
 ```
 
@@ -159,11 +159,11 @@ An update is stored in the `value` field as JSON:
 
 ```json
 {
-  "schema": 2,
+  "schema": 3,
   "type": "items",
   "id": "7f1c2a9e-36e7-4f83-a50c-d21497d7628a",
   "op": "upsert",
-  "version": 42,
+  "sequence": 918260,
   "typeSeq": 918273,
   "committedAt": "2026-10-20T10:15:03.123Z",
   "changes": {
@@ -179,17 +179,16 @@ delete has no `changes` member:
 
 ```json
 {
-  "schema": 2,
+  "schema": 3,
   "type": "items",
   "id": "7f1c2a9e-36e7-4f83-a50c-d21497d7628a",
   "op": "delete",
-  "version": 42,
   "typeSeq": 918274,
   "committedAt": "2026-10-20T10:16:11.456Z"
 }
 ```
 
 The authoritative payload schema is
-`packages/protocol/schema/outbox-event.v2.json`. Delivery is at least once, so
-consumers must use `version` and `typeSeq` to reject duplicates and detect
+`packages/protocol/schema/outbox-event.v3.json`. Delivery is at least once, so
+consumers must use `sequence` and `typeSeq` to reject duplicates and detect
 gaps.

@@ -143,7 +143,7 @@ function printEntry(stream, entryId, fields) {
 
   if (event !== null && typeof event === 'object') {
     console.log(
-      `event: ${event.op ?? '?'} ${event.type ?? '?'} | version=${event.version ?? '?'} | typeSeq=${event.typeSeq ?? '?'}`,
+      `event: ${event.op ?? '?'} ${event.type ?? '?'} | sequence=${event.sequence ?? '-'} | typeSeq=${event.typeSeq ?? '?'}`,
     );
     console.log(JSON.stringify(event, null, 2));
   } else {

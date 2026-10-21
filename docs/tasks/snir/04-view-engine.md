@@ -58,10 +58,10 @@ Use the POC domain from `infra/postgres/init/02-schema.sql` (countries, connecti
 **Deliverables**
 
 1. `compileFullQuery(reg, view, {layout})`:
-   - `SELECT id, version, <group fields>, <sort field> FROM ... JOIN ... WHERE <scope> AND <filter>`;
+   - `SELECT id, sequence, <group fields>, <sort field> FROM ... JOIN ... WHERE <scope> AND <filter>`;
    - used for view builds, full runs after a connection change, reconciliation and the sampler.
 2. `compileRecheckBatch(reg, type, views[])`:
-   - one statement for a set of candidate views of the same type: `SELECT a.id, a.version, (<filter1>) AS m0, (<filter2>) AS m1, ..., <group/sort fields of each layout> FROM ... WHERE a.id = ANY($1::uuid[])`;
+   - one statement for a set of candidate views of the same type: `SELECT a.id, a.sequence, (<filter1>) AS m0, (<filter2>) AS m1, ..., <group/sort fields of each layout> FROM ... WHERE a.id = ANY($1::uuid[])`;
    - joins included once even if several views need them;
    - views sharing the same filter template differ only in parameters.
 3. `compileRowFetch(reg, type, 'page'|'detail')`: full display rows by `id = ANY($1)`, with nested child data aggregated as JSON (e.g. `jsonb_agg` of crew).
@@ -121,7 +121,7 @@ Use the POC domain from `infra/postgres/init/02-schema.sql` (countries, connecti
 **Deliverables**
 
 1. **Slot allocator:** entity UUID ↔ dense integer slot (`Map<string, number>` plus a free list). Columns in typed arrays:
-   - `version` as `Float64Array` (safe up to 2^53);
+   - source `sequence` as `Float64Array` (safe up to 2^53);
    - sort value as `Float64Array`, with strings mapped to rank order through a dictionary;
    - group value ids as `Uint32Array` per grouping level, with dictionary-encoded strings.
 2. **`applyFull(rows)`** builds from scratch. **`applyRecheck(rows, checkedIds)`** returns `Diff { added: id[], removed: id[], updated: id[], moved: id[] }`; `moved` means its group or sort position changed. IDs in `checkedIds` but missing from `rows` were deleted.
@@ -158,7 +158,7 @@ Use the POC domain from `infra/postgres/init/02-schema.sql` (countries, connecti
    - initial state "unknown" accepts the first value seen.
 2. **`TickBatcher`:**
    - collects events between ticks;
-   - keeps only the highest `version` per (type, id);
+   - keeps only the highest source `sequence` per (type, id), while deletes remain ordered by `typeSeq`;
    - separates deletes;
    - asks `DependencyIndex` for candidates;
    - groups re-check work by type: `{ type, ids[], viewKeys[], linkQueries[], fullRunViewKeys[] }`.

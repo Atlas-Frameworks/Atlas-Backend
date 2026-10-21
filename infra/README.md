@@ -13,7 +13,7 @@ The locally run change publisher uses the Postgres and Redis endpoints exposed
 by Compose. It runs one independent loop per registered entity type, allocates
 `typeSeq` after commit, and writes the event to `changes:<entityType>` before
 deleting its durable outbox row. A crash after Redis accepts an event but before
-deletion can create a duplicate; consumers handle that safely through `version`
+deletion can create a duplicate; consumers handle that safely through `sequence`
 and `typeSeq`.
 
 ```bash
@@ -74,8 +74,8 @@ limits with `ITEM_INTERVAL_MS`, `CUSTOMER_INTERVAL_MS`, `ORDER_INTERVAL_MS`,
 `DISTRIBUTOR_INTERVAL_MS`, and the corresponding `*_MAX_UPDATES` variables.
 Add `--once` to run one cycle for every entity type and `--rollback` to test
 the updates without saving them.
-The normal version and synchronization triggers remain responsible for version
-increments and outbox events.
+The simulator injects the source `sequence`; synchronization triggers validate
+that updates increase it and create outbox events.
 
 Run `replicator:watch` in a second terminal to monitor the synchronization pipeline.
 It checks Debezium's health endpoint and prints new events from all four Redis
@@ -105,17 +105,18 @@ The schema files applied by `postgres:setup` create `customers`, `items`,
 tables are created under `public`. Each order references an item and customer
 inside its own schema; distributor order IDs are stored as a UUID array.
 
-Every entity has a `version` and `updated_at`. Generic database triggers
-increment the version and write a raw event to that entity's durable outbox for
+Every entity has a source `sequence` and `updated_at`. The replicator supplies
+one globally increasing source sequence across all entity types. Generic database triggers
+validate the sequence and write a raw event to that entity's durable outbox for
 every insert, update, or delete. Upserts carry a generic business-field diff;
-deletes carry the deleted ID. The publisher allocates the entity's sequence and
+deletes carry the deleted ID without a source sequence. The publisher allocates the entity's `typeSeq` and
 writes those events into the shared streams
 `changes:customers`, `changes:items`, `changes:orders`, and
 `changes:distributors`.
 
 Register a new Publisher application table in its migration with
-`SELECT register_synced_table('benchmark_publisher.table_name');`. It must have an `id uuid`
-column. Registration adds `version` and `updated_at`, creates the entity-specific
+`SELECT register_synced_table('benchmark_publisher.table_name');`. It must have
+`id uuid` and non-null `sequence bigint` columns. Registration adds `updated_at`, creates the entity-specific
 outbox and generic triggers, and registers the entity's independent sequence.
 
 Redis Streams do not require a separate Redis mode or pre-created stream. A
