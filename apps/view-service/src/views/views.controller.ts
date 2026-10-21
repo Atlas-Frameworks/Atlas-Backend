@@ -37,7 +37,10 @@ export class ViewsController {
         loaded: view.loaded,
         total: view.ids.size,
         seq: view.seq,
-        refCount: view.refCount,
+        closesAt:
+          view.closesAt === undefined
+            ? null
+            : new Date(view.closesAt).toISOString(),
         listeners: view.listeners.size,
         dependsOn: describe(this.dependencies.dependenciesOf(view.viewKey)),
       })),
@@ -70,8 +73,8 @@ export class ViewsController {
       const listener: ViewListener = {
         send: (event) => subscriber.next(toMessage(event)),
       };
-      view.listeners.add(listener);
-      return () => view.listeners.delete(listener);
+      this.views.addListener(view, listener);
+      return () => this.views.removeListener(view, listener);
     });
     const heartbeat = interval(HEARTBEAT_MS).pipe(
       map((): MessageEvent => ({ comment: 'ping' })),
@@ -88,7 +91,8 @@ export interface ViewsDebug {
     loaded: boolean;
     total: number;
     seq: number;
-    refCount: number;
+    /** When the view closes because nobody streams it; null while streamed. */
+    closesAt: string | null;
     listeners: number;
     dependsOn: Record<string, DependencyDebug>;
   }[];

@@ -68,13 +68,16 @@ describe('ViewsController (observable)', () => {
     sub.unsubscribe();
   });
 
-  it('removes the listener when the client goes away', () => {
+  it('removes the listener when the client goes away, starting the close timer', () => {
     const { controller, view } = setup();
 
     const sub = controller.events('key').subscribe();
     expect(view.listeners.size).toBe(1);
+    expect(view.closesAt).toBeUndefined();
     sub.unsubscribe();
     expect(view.listeners.size).toBe(0);
+    expect(view.closesAt).toBeDefined();
+    clearTimeout(view.closeTimer);
   });
 
   it('sends a heartbeat comment', () => {
@@ -177,7 +180,7 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
           loaded: true,
           total: 1,
           seq: 0,
-          refCount: 1,
+          closesAt: expect.any(String),
           listeners: 0,
           dependsOn: {
             orders: { fields: ['item_id', 'customer_id'] },

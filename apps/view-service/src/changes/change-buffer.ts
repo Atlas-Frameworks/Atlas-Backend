@@ -65,6 +65,20 @@ export class ChangeBuffer {
     return batch;
   }
 
+  /**
+   * Forgets a type nobody reads any more: its pending events and its last
+   * typeSeq, so reading it again later doesn't count the skipped events as a gap.
+   */
+  forget(type: string): void {
+    this.lastTypeSeq.delete(type);
+    this.gapTypes.delete(type);
+    for (const [key, evt] of this.pending) {
+      if (evt.type === type) {
+        this.pending.delete(key);
+      }
+    }
+  }
+
   /** The pending events, without draining them (for debugging). */
   peek(): ChangeEvent[] {
     return [...this.pending.values()];

@@ -16,7 +16,6 @@ describe('ViewRegistry', () => {
 
     expect(second).toBe(first);
     expect(first.statement).toBe(books);
-    expect(first.refCount).toBe(2);
     expect(registry.list()).toHaveLength(1);
   });
 
@@ -45,15 +44,13 @@ describe('ViewRegistry', () => {
     expect(registry.get('unknown')).toBeUndefined();
   });
 
-  it('counts users down on release, never below 0', () => {
+  it('removes a view, so opening the key again starts a new one', () => {
     const view = registry.open('books', 'orders', books);
-    registry.open('books', 'orders', books);
 
-    registry.release(view.viewKey);
-    expect(view.refCount).toBe(1);
-    registry.release(view.viewKey);
-    registry.release(view.viewKey);
-    expect(view.refCount).toBe(0);
-    expect(registry.release('unknown')).toBeUndefined();
+    registry.remove('books');
+    registry.remove('unknown');
+
+    expect(registry.get('books')).toBeUndefined();
+    expect(registry.open('books', 'orders', books)).not.toBe(view);
   });
 });

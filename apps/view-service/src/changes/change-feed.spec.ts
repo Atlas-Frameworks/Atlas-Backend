@@ -76,6 +76,42 @@ describe('ChangeFeed', () => {
     expect(feed.streamPositions()).toEqual({ 'changes:orders': '0-0' });
   });
 
+  it('stops reading an unwatched type and drops its pending events', async () => {
+    await feed.watch(['orders', 'items']);
+    reader.add('changes:orders', changeEvent({ id: 'a', typeSeq: 1 }));
+    await vi.waitFor(() => expect(buffer.peek()).toHaveLength(1));
+
+    feed.unwatch(['orders']);
+    reader.add('changes:orders', changeEvent({ id: 'b', typeSeq: 2 }));
+    reader.add('changes:items', changeEvent({ type: 'items', id: 'x' }));
+
+    await vi.waitFor(() =>
+      expect(buffer.peek().map((e) => e.id)).toEqual(['x']),
+    );
+    expect(Object.keys(feed.streamPositions())).toEqual(['changes:items']);
+  });
+
+  it('reads a type watched again from its position at that time', async () => {
+    await feed.watch(['orders']);
+    feed.unwatch(['orders']);
+    reader.add('changes:orders', changeEvent({ id: 'missed', typeSeq: 1 }));
+
+    await feed.watch(['orders']);
+    reader.add('changes:orders', changeEvent({ id: 'new', typeSeq: 2 }));
+
+    await vi.waitFor(() =>
+      expect(buffer.peek().map((e) => e.id)).toEqual(['new']),
+    );
+  });
+
+  it('does not start reading a type unwatched while its position was recorded', async () => {
+    const watching = feed.watch(['orders']);
+    feed.unwatch(['orders']);
+    await watching;
+
+    expect(feed.streamPositions()).toEqual({});
+  });
+
   it('counts invalid events and moves past them', async () => {
     await feed.watch(['orders']);
     reader.addRaw('changes:orders', ['k', 'not json']);

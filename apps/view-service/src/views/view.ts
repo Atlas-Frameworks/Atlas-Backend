@@ -25,8 +25,10 @@ export class View {
   readonly listeners = new Set<ViewListener>();
   /** Sequence number of the last message sent for this view. */
   seq = 0;
-  /** Number of users that opened this view and haven't closed it. */
-  refCount = 0;
+  /** Set while nobody streams the view: it is removed when this fires. */
+  closeTimer: NodeJS.Timeout | undefined;
+  /** When the close timer fires (ms since epoch), for debugging. */
+  closesAt: number | undefined;
   /** The first load from Postgres; shared by everyone who opens the view meanwhile. */
   loading: Promise<void> | undefined;
   /** True once `ids` holds the result of the full query. */

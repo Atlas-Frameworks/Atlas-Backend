@@ -60,6 +60,18 @@ export class ChangeFeed implements OnApplicationBootstrap, OnModuleDestroy {
     await Promise.all([...types].map((type) => this.watchOne(type)));
   }
 
+  /**
+   * Stops reading these types and drops their pending events. A later
+   * `watch` starts again from the stream's position at that time.
+   */
+  unwatch(types: Iterable<string>): void {
+    for (const type of types) {
+      this.watching.delete(type);
+      this.positions.delete(streamOf(type));
+      this.buffer.forget(type);
+    }
+  }
+
   /** The stream positions being read (for debugging). */
   streamPositions(): Record<string, string> {
     return Object.fromEntries(this.positions);
@@ -69,16 +81,20 @@ export class ChangeFeed implements OnApplicationBootstrap, OnModuleDestroy {
     let pending = this.watching.get(type);
     if (!pending) {
       const stream = streamOf(type);
-      pending = this.reader.lastId(stream).then(
+      const recording: Promise<void> = this.reader.lastId(stream).then(
         (id) => {
-          this.positions.set(stream, id);
-          this.wake?.();
+          // Unwatched meanwhile: don't start reading it.
+          if (this.watching.get(type) === recording) {
+            this.positions.set(stream, id);
+            this.wake?.();
+          }
         },
         (err: unknown) => {
           this.watching.delete(type);
           throw err;
         },
       );
+      pending = recording;
       this.watching.set(type, pending);
     }
     return pending;
@@ -92,12 +108,9 @@ export class ChangeFeed implements OnApplicationBootstrap, OnModuleDestroy {
         continue;
       }
       try {
-        const read = await this.reader.read(
-          new Map(this.positions),
-          this.blockMs,
-          READ_COUNT,
-        );
-        this.apply(read);
+        const from = new Map(this.positions);
+        const read = await this.reader.read(from, this.blockMs, READ_COUNT);
+        this.apply(read, from);
       } catch (err) {
         if (this.stopped) {
           break;
@@ -109,8 +122,15 @@ export class ChangeFeed implements OnApplicationBootstrap, OnModuleDestroy {
     }
   }
 
-  private apply(read: Map<string, StreamEntry[]>): void {
+  private apply(
+    read: Map<string, StreamEntry[]>,
+    from: ReadonlyMap<string, string>,
+  ): void {
     for (const [stream, entries] of read) {
+      // Unwatched (or unwatched and watched again) during the read: skip it.
+      if (this.positions.get(stream) !== from.get(stream)) {
+        continue;
+      }
       for (const entry of entries) {
         this.stats.entries += 1;
         const { events, invalid } = parseEntry(entry.fields);

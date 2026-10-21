@@ -125,6 +125,24 @@ describe('ChangeBuffer', () => {
     expect(b).toMatchObject({ op: 'delete', version: 2, changes: undefined });
   });
 
+  it('forgets a type: its pending events, gap and last typeSeq', () => {
+    buffer.push(changeEvent({ id: 'a', typeSeq: 1 }));
+    buffer.push(changeEvent({ id: 'b', typeSeq: 3 }));
+    buffer.push(changeEvent({ type: 'items', id: 'x', typeSeq: 7 }));
+
+    buffer.forget('orders');
+
+    expect(buffer.sequences()).toEqual({ items: 7 });
+    expect(buffer.push(changeEvent({ id: 'c', typeSeq: 9 }))).toBe('ok');
+    expect(buffer.drain()).toEqual({
+      events: [
+        expect.objectContaining({ id: 'x' }),
+        expect.objectContaining({ id: 'c' }),
+      ],
+      gapTypes: [],
+    });
+  });
+
   it('shows pending events and sequences without draining', () => {
     buffer.push(changeEvent({ typeSeq: 9 }));
 
