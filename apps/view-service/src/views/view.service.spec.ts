@@ -1,3 +1,4 @@
+import type { ChangeFeed } from '../changes/change-feed.js';
 import { DependencyIndex } from './dependency-index.js';
 import type { ViewLoader } from './view-loader.js';
 import { ViewRegistry } from './view-registry.js';
@@ -10,6 +11,7 @@ function setup() {
     registry,
     {} as ViewLoader,
     new DependencyIndex(),
+    {} as ChangeFeed,
   );
   const view = registry.open('key', 'orders', { text: 'SELECT', values: [] });
   view.ids.set('a', 1).set('b', 2);

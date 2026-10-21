@@ -2,6 +2,8 @@ import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
+import { FakeStreamReader } from '../changes/fake-stream-reader.js';
+import { StreamReader } from '../changes/stream-reader.js';
 import { DbService } from '../db/db.service.js';
 import { ExampleModule } from './example.module.js';
 
@@ -22,6 +24,8 @@ describe('example OrdersController', () => {
     })
       .overrideProvider(DbService)
       .useValue(db)
+      .overrideProvider(StreamReader)
+      .useValue(new FakeStreamReader())
       .compile();
     app = moduleRef.createNestApplication();
     await app.init();

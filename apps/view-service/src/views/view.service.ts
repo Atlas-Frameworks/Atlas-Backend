@@ -3,6 +3,7 @@ import {
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { ChangeFeed } from '../changes/change-feed.js';
 import { queryKey, type QueryDefinition } from './define-query.js';
 import { DependencyIndex } from './dependency-index.js';
 import { toStatement } from './sql.js';
@@ -27,12 +28,14 @@ export class ViewService {
     private readonly registry: ViewRegistry,
     private readonly loader: ViewLoader,
     private readonly dependencies: DependencyIndex,
+    private readonly feed: ChangeFeed,
   ) {}
 
   /**
    * Opens the view for a query and its params, or joins the existing one.
    * Undefined params don't change the viewKey and are left to `build` to skip.
-   * Dependencies are registered before the load, so changes during it are seen.
+   * Dependencies are registered and their streams' positions recorded before
+   * the load, so every change from that point on is read.
    */
   async open<P>(query: QueryDefinition<P>, params: P): Promise<ViewSnapshot> {
     const view = this.registry.open(
@@ -42,6 +45,9 @@ export class ViewService {
     );
     this.dependencies.add(view.viewKey, query.entityType, query.dependsOn);
     try {
+      await this.feed.watch(
+        Object.keys(this.dependencies.dependenciesOf(view.viewKey)!),
+      );
       await this.loader.ensureLoaded(view);
     } catch (err) {
       this.registry.release(view.viewKey);

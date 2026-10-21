@@ -18,12 +18,16 @@ CREATE TABLE IF NOT EXISTS entity_type_sequence (
 );
 
 -- Publication containing ONLY the outbox table (Debezium publication.autocreate.mode=disabled).
+-- Dropping and recreating outbox silently removes it from the publication, and Debezium then
+-- receives nothing, with no error. SET TABLE on every run repairs that and drops any other table.
 DO $$
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_publication WHERE pubname = 'atlas_outbox'
   ) THEN
     CREATE PUBLICATION atlas_outbox FOR TABLE outbox;
+  ELSE
+    ALTER PUBLICATION atlas_outbox SET TABLE outbox;
   END IF;
 END;
 $$;

@@ -7,8 +7,11 @@ import {
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
+import { FakeStreamReader } from '../changes/fake-stream-reader.js';
+import { StreamReader } from '../changes/stream-reader.js';
 import { DbService } from '../db/db.service.js';
 import { ExampleModule } from '../example/example.module.js';
+import type { ChangeFeed } from '../changes/change-feed.js';
 import { DependencyIndex } from './dependency-index.js';
 import type { ViewLoader } from './view-loader.js';
 import { ViewRegistry } from './view-registry.js';
@@ -22,6 +25,7 @@ describe('ViewsController (observable)', () => {
       registry,
       {} as ViewLoader,
       new DependencyIndex(),
+      {} as ChangeFeed,
     );
     const controller = new ViewsController(
       registry,
@@ -100,6 +104,8 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
     })
       .overrideProvider(DbService)
       .useValue(db)
+      .overrideProvider(StreamReader)
+      .useValue(new FakeStreamReader())
       .compile();
     app = moduleRef.createNestApplication();
     await app.listen(0);
