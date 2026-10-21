@@ -1,9 +1,9 @@
-import { readPublisherConfig } from './config.js';
+import { loadPublisherConfig } from './config.js';
 import { runEntityPublishLoop } from './entity-publish-loop.js';
 import { PostgresEventRepository } from './postgres-event-repository.js';
 import { RedisEventPublisher } from './redis-event-publisher.js';
 
-const config = readPublisherConfig(process.env);
+const config = await loadPublisherConfig(process.env['PUBLISHER_ENV']);
 const repository = new PostgresEventRepository({
   connectionString: config.databaseUrl,
   sourceSchema: config.sourceSchema,

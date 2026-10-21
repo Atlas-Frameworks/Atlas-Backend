@@ -20,15 +20,42 @@ publisher or Redis deployment without changing the trigger flow.
 
 ## Configuration
 
-| Variable | Default | Purpose |
+Publisher settings are loaded from `apps/change-publisher/config/default.json`.
+They are not read individually from `process.env`. The checked-in defaults are:
+
+| Property | Default | Purpose |
 | --- | --- | --- |
-| `DATABASE_URL` | `postgresql://atlas_publisher:atlas_publisher@localhost:5432/atlas` | Primary PostgreSQL connection |
-| `REDIS_URL` | `redis://localhost:6380` | Stable Redis master endpoint |
-| `PUBLISHER_SCHEMA` | `benchmark_publisher` | Source schema; other values are rejected |
-| `PUBLISHER_ID` | Generated per process | Lease owner identity |
-| `PUBLISHER_BATCH_SIZE` | `1000` | Events claimed per entity and batch |
-| `PUBLISHER_LEASE_SECONDS` | `30` | Entity publisher lease duration |
-| `PUBLISHER_IDLE_DELAY_MS` | `100` | Delay when no event is available or a retry is needed |
+| `databaseUrl` | `postgresql://atlas_publisher:atlas_publisher@localhost:5432/atlas` | Primary PostgreSQL connection |
+| `redisUrl` | `redis://localhost:6380` | Stable Redis master endpoint |
+| `sourceSchema` | `benchmark_publisher` | Source schema; other values are rejected |
+| `owner` | Generated per process when omitted | Lease owner identity |
+| `batchSize` | `1000` | Events claimed per entity and batch |
+| `leaseSeconds` | `30` | Entity publisher lease duration |
+| `idleDelayMilliseconds` | `100` | Delay when no event is available or a retry is needed |
+
+To configure an environment, add
+`apps/change-publisher/config/<environment>.json` containing only its overrides.
+For example, `config/production.json` can contain:
+
+```json
+{
+  "databaseUrl": "postgresql://atlas_publisher:secret@postgres.example/atlas",
+  "redisUrl": "rediss://redis.example:6380",
+  "batchSize": 2000
+}
+```
+
+Select it with the single environment selector:
+
+```powershell
+$env:PUBLISHER_ENV = 'production'
+npm run publisher:start
+```
+
+The selected file is merged over `default.json`. If `PUBLISHER_ENV` is not set,
+only `default.json` is used. If it names a missing or invalid file, startup fails
+instead of silently using local defaults. Do not commit environment files that
+contain production secrets.
 
 Run locally after `postgres:setup` and `postgres:seed`:
 
