@@ -1,4 +1,5 @@
 import { SortKeys, type SortSpec, type SortType } from './sort-keys.js';
+import type { SortedIndex } from './sorted-index.js';
 import type { SqlStatement } from './sql.js';
 import type { Membership } from './view-diff.js';
 
@@ -50,6 +51,14 @@ export class View implements Membership {
     readonly defaultSort?: SortSpec,
   ) {
     this.sortKeys = new SortKeys(sortable);
+  }
+
+  /**
+   * The held ids in this sort (by id when undefined). Built from memory on
+   * first use, then kept in order as the view changes.
+   */
+  sorted(spec: SortSpec | undefined): SortedIndex {
+    return this.sortKeys.index(spec, this.ids.keys());
   }
 
   nextSeq(): number {

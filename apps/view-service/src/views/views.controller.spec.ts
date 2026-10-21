@@ -125,17 +125,15 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
   let app: INestApplication<App>;
   let baseUrl: string;
   const db = {
-    query: vi
-      .fn()
-      .mockResolvedValue([
-        {
-          id: 'order-1',
-          version: '2',
-          name: 'n',
-          item_type: 'book',
-          item_price: '10.00',
-        },
-      ]),
+    query: vi.fn().mockResolvedValue([
+      {
+        id: 'order-1',
+        version: '2',
+        name: 'n',
+        item_type: 'book',
+        item_price: '10.00',
+      },
+    ]),
     onModuleDestroy: vi.fn(),
   };
 
@@ -222,6 +220,7 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
           listeners: 0,
           sortable: { name: 'text', item_type: 'text', item_price: 'number' },
           defaultSort: 'name:asc',
+          sorts: [],
           dependsOn: {
             orders: { fields: ['name', 'item_id', 'customer_id'] },
             items: {
@@ -231,6 +230,74 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
           },
         },
       ],
+    });
+  });
+
+  it('shows the ids of a view in a sort order, from memory', async () => {
+    db.query.mockResolvedValueOnce([
+      {
+        id: 'b',
+        version: '1',
+        name: 'Pen',
+        item_type: 'office',
+        item_price: '25.00',
+      },
+      {
+        id: 'a',
+        version: '1',
+        name: 'Book',
+        item_type: 'book',
+        item_price: '100.00',
+      },
+      {
+        id: 'c',
+        version: '1',
+        name: 'Cup',
+        item_type: 'home',
+        item_price: '25.00',
+      },
+    ]);
+    const opened = await request(app.getHttpServer())
+      .get('/orders?type=sort-spec')
+      .expect(200);
+    const url = `/views/${opened.body.viewKey}/order`;
+    const queries = db.query.mock.calls.length;
+
+    const byName = await request(app.getHttpServer()).get(url).expect(200);
+    const byPrice = await request(app.getHttpServer())
+      .get(`${url}?sort=item_price:desc`)
+      .expect(200);
+
+    expect(byName.body).toEqual({
+      sort: 'name:asc',
+      total: 3,
+      order: [
+        { id: 'a', value: 'Book' },
+        { id: 'c', value: 'Cup' },
+        { id: 'b', value: 'Pen' },
+      ],
+    });
+    expect(byPrice.body.order).toEqual([
+      { id: 'a', value: 100 },
+      { id: 'b', value: 25 },
+      { id: 'c', value: 25 },
+    ]);
+    expect(db.query.mock.calls.length).toBe(queries);
+  });
+
+  it('returns 400 INVALID_PARAM for a column that is not sortable', async () => {
+    const opened = await request(app.getHttpServer())
+      .get('/orders?type=book')
+      .expect(200);
+
+    const res = await request(app.getHttpServer())
+      .get(`/views/${opened.body.viewKey}/order?sort=customer_id`)
+      .expect(400);
+
+    expect(res.body).toEqual({
+      code: 'INVALID_PARAM',
+      message:
+        'cannot sort by customer_id; sortable: name, item_type, item_price',
     });
   });
 

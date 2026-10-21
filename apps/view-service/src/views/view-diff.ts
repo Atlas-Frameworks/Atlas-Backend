@@ -46,9 +46,10 @@ export function hashRow(row: Row): number {
 
 /** Stores a row the view now holds, or a newer version of it. */
 export function hold(view: Membership, row: Row, hash = hashRow(row)): void {
+  const isNew = !view.ids.has(row.id);
   view.ids.set(row.id, row.version);
   view.hashes.set(row.id, hash);
-  view.sortKeys.set(row);
+  view.sortKeys.set(row, isNew);
 }
 
 /** Forgets an id the view no longer holds. */

@@ -65,14 +65,17 @@ describe('SortKeys', () => {
       created: 'time',
     });
 
-    keys.set({
-      id: 'a',
-      version: 1,
-      item_price: '25.50',
-      name: 'Book',
-      created: new Date('2026-10-21T10:00:00Z'),
-      customer_id: 'c',
-    });
+    keys.set(
+      {
+        id: 'a',
+        version: 1,
+        item_price: '25.50',
+        name: 'Book',
+        created: new Date('2026-10-21T10:00:00Z'),
+        customer_id: 'c',
+      },
+      true,
+    );
 
     expect(keys.get('item_price', 'a')).toBe(25.5);
     expect(keys.get('name', 'a')).toBe('Book');
@@ -83,7 +86,7 @@ describe('SortKeys', () => {
   it('keeps null for a null value', () => {
     const keys = new SortKeys({ item_price: 'number' });
 
-    keys.set({ id: 'a', version: 1, item_price: null });
+    keys.set({ id: 'a', version: 1, item_price: null }, true);
 
     expect(keys.get('item_price', 'a')).toBeNull();
   });
@@ -91,15 +94,15 @@ describe('SortKeys', () => {
   it('throws when the query does not select a sortable column', () => {
     const keys = new SortKeys({ item_price: 'number' });
 
-    expect(() => keys.set({ id: 'a', version: 1 })).toThrow(
+    expect(() => keys.set({ id: 'a', version: 1 }, true)).toThrow(
       'sortable column item_price is not selected by the query',
     );
   });
 
   it('forgets an id, or everything', () => {
     const keys = new SortKeys({ item_price: 'number' });
-    keys.set({ id: 'a', version: 1, item_price: 1 });
-    keys.set({ id: 'b', version: 1, item_price: 2 });
+    keys.set({ id: 'a', version: 1, item_price: 1 }, true);
+    keys.set({ id: 'b', version: 1, item_price: 2 }, true);
 
     keys.delete('a');
     expect(keys.get('item_price', 'a')).toBeUndefined();

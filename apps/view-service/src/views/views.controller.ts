@@ -3,17 +3,20 @@ import {
   Get,
   NotFoundException,
   Param,
+  Query,
   Sse,
   type MessageEvent,
 } from '@nestjs/common';
 import { interval, map, merge, Observable } from 'rxjs';
 import type { Dependency } from './define-query.js';
 import { DependencyIndex } from './dependency-index.js';
-import type { SortType } from './sort-keys.js';
+import { optionalSort } from '../http/query-params.js';
+import type { SortType, SortValue } from './sort-keys.js';
+import { sortName } from './sorted-index.js';
 import { toStatement } from './sql.js';
 import { ViewRegistry } from './view-registry.js';
 import { ViewService } from './view.service.js';
-import type { ViewEvent, ViewListener } from './view.js';
+import type { View, ViewEvent, ViewListener } from './view.js';
 
 /** A comment line every 15 s keeps idle proxies from closing the stream. */
 export const HEARTBEAT_MS = 15_000;
@@ -44,9 +47,8 @@ export class ViewsController {
             : new Date(view.closesAt).toISOString(),
         listeners: view.listeners.size,
         sortable: view.sortKeys.types,
-        defaultSort: view.defaultSort
-          ? `${view.defaultSort.column}:${view.defaultSort.dir}`
-          : null,
+        defaultSort: view.defaultSort ? sortName(view.defaultSort) : null,
+        sorts: view.sortKeys.indexNames(),
         dependsOn: describe(this.dependencies.dependenciesOf(view.viewKey)),
       })),
     };
@@ -59,13 +61,7 @@ export class ViewsController {
    */
   @Sse(':viewKey/events')
   events(@Param('viewKey') key: string): Observable<MessageEvent> {
-    const view = this.registry.get(key);
-    if (!view?.loaded) {
-      throw new NotFoundException({
-        code: 'UNKNOWN_VIEW',
-        message: `view ${key} is not open`,
-      });
-    }
+    const view = this.loadedView(key);
     const events = new Observable<MessageEvent>((subscriber) => {
       // The snapshot's seq and the listener are taken in one synchronous step,
       // so no event can fall between them. Events published while the rows
@@ -94,6 +90,48 @@ export class ViewsController {
     );
     return merge(events, heartbeat);
   }
+
+  /**
+   * GET /views/:viewKey/order?sort=item_price:desc — debug: the view's ids in
+   * a sort order with their sort value, read from memory. No sort: the view's
+   * default sort.
+   */
+  @Get(':viewKey/order')
+  order(
+    @Param('viewKey') key: string,
+    @Query('sort') sort?: string,
+  ): OrderDebug {
+    const view = this.loadedView(key);
+    const spec =
+      optionalSort('sort', sort, view.sortKeys.types) ?? view.defaultSort;
+    const { ids } = view.sorted(spec);
+    return {
+      sort: sortName(spec),
+      total: ids.length,
+      order: ids.map((id) => ({
+        id,
+        value: spec ? (view.sortKeys.get(spec.column, id) ?? null) : id,
+      })),
+    };
+  }
+
+  private loadedView(key: string): View {
+    const view = this.registry.get(key);
+    if (!view?.loaded) {
+      throw new NotFoundException({
+        code: 'UNKNOWN_VIEW',
+        message: `view ${key} is not open`,
+      });
+    }
+    return view;
+  }
+}
+
+export interface OrderDebug {
+  /** "column:dir", or "id". */
+  sort: string;
+  total: number;
+  order: { id: string; value: SortValue }[];
 }
 
 export interface ViewsDebug {
@@ -110,6 +148,8 @@ export interface ViewsDebug {
     sortable: Readonly<Record<string, SortType>>;
     /** "column:dir", or null when the view sorts by id. */
     defaultSort: string | null;
+    /** Sorted indexes built so far. */
+    sorts: string[];
     dependsOn: Record<string, DependencyDebug>;
   }[];
 }

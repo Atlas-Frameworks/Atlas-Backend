@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { parseSort, type SortSpec, type SortType } from '../views/sort-keys.js';
 
 // Turns raw HTTP query-string values into typed, optional params for views.
 // Missing or empty ("?minPrice=") means "not set" and returns undefined.
@@ -33,6 +34,25 @@ export function optionalUuid(name: string, raw: unknown): string | undefined {
     invalid(`${name} must be a uuid`);
   }
   return raw.toLowerCase();
+}
+
+/** "?sort=item_price:desc" → a sort on one of the view's sortable columns. */
+export function optionalSort(
+  name: string,
+  raw: unknown,
+  sortable: Readonly<Record<string, SortType>>,
+): SortSpec | undefined {
+  if (isUnset(raw)) {
+    return undefined;
+  }
+  if (typeof raw !== 'string') {
+    invalid(`${name} must be given once`);
+  }
+  const sort = parseSort(raw, sortable);
+  if (typeof sort === 'string') {
+    invalid(sort);
+  }
+  return sort;
 }
 
 /** "?type=a" → ['a'], "?type=a&type=b" → ['a', 'b']. */

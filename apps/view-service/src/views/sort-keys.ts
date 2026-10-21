@@ -1,3 +1,4 @@
+import { SortedIndex, sortName } from './sorted-index.js';
 import type { Row } from './view-diff.js';
 
 /**
@@ -59,12 +60,15 @@ export function compareBy(
 }
 
 /**
- * The sortable columns' values of every id a view holds, so any sort can be
- * built and kept in order from memory. Only these columns of a row are kept.
+ * The sortable columns' values of every id a view holds, and the sorted
+ * indexes built from them. Only these columns of a row are kept. Each index
+ * is built on first use and then kept in order by `set` and `delete`.
  */
 export class SortKeys {
   /** column → id → value. */
   private readonly columns = new Map<string, Map<string, SortValue>>();
+  /** sort name → index. At most two per sortable column plus one by id. */
+  private readonly indexes = new Map<string, SortedIndex>();
 
   constructor(readonly types: Readonly<Record<string, SortType>>) {
     for (const column of Object.keys(types)) {
@@ -72,28 +76,80 @@ export class SortKeys {
     }
   }
 
-  /** Keeps the row's sortable values. Throws if the SQL doesn't select one. */
-  set(row: Row): void {
+  /**
+   * The ids sorted by `spec`, by id when undefined. Built from `ids` (every
+   * id held) on first use.
+   */
+  index(spec: SortSpec | undefined, ids: Iterable<string>): SortedIndex {
+    const name = sortName(spec);
+    let index = this.indexes.get(name);
+    if (!index) {
+      const column = spec?.column;
+      index = new SortedIndex(
+        spec,
+        (id) => (column === undefined ? null : (this.get(column, id) ?? null)),
+        ids,
+      );
+      this.indexes.set(name, index);
+    }
+    return index;
+  }
+
+  /** The sorts built so far (for debugging). */
+  indexNames(): string[] {
+    return [...this.indexes.keys()];
+  }
+
+  /**
+   * Keeps the row's sortable values, and moves it in every index whose
+   * column changed (`isNew`: adds it to every index). Throws if the SQL
+   * doesn't select a sortable column.
+   */
+  set(row: Row, isNew: boolean): void {
+    const changed = new Set<string>();
     for (const [column, values] of this.columns) {
       if (!(column in row)) {
         throw new Error(
           `sortable column ${column} is not selected by the query`,
         );
       }
+      const value = toSortValue(this.types[column], row[column]);
+      if (!isNew && values.get(row.id) !== value) {
+        changed.add(column);
+      }
+    }
+    const moved = [...this.indexes.values()].filter((index) =>
+      isNew ? true : index.spec !== undefined && changed.has(index.spec.column),
+    );
+    // Out before the value changes: remove finds the id by its old value.
+    if (!isNew) {
+      for (const index of moved) {
+        index.remove(row.id);
+      }
+    }
+    for (const [column, values] of this.columns) {
       values.set(row.id, toSortValue(this.types[column], row[column]));
+    }
+    for (const index of moved) {
+      index.insert(row.id);
     }
   }
 
   delete(id: string): void {
+    for (const index of this.indexes.values()) {
+      index.remove(id);
+    }
     for (const values of this.columns.values()) {
       values.delete(id);
     }
   }
 
+  /** Forgets every value, and drops the indexes: they are built again on next use. */
   clear(): void {
     for (const values of this.columns.values()) {
       values.clear();
     }
+    this.indexes.clear();
   }
 
   /** The column's value for an id; undefined if the id or column isn't held. */
