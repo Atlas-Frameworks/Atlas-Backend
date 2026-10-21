@@ -95,9 +95,11 @@ The replicator writes each entity and its change event in the same database tran
    - The payload holds:
      - version and operation;
      - a sequence number per entity type, increasing by 1 per event, so consumers can spot a lost event;
-     - the map fields (position, icon code, label), so workers never read the database for map updates;
-     - routing values: old and new values of fields that decide which views an entity can belong to, such as its country ID. A delete carries the last known values;
-     - optionally, the root IDs affected by a change to a related entity (for example, the airplanes linked to a changed airport). The replicator knows these at write time, which is the most reliable place to compute them.
+     - a generic `changes` diff. Inserts carry every business field in `new`;
+       updates carry only differing fields in `old` and `new`, including fields
+       used for display, filtering and relationships;
+     - deletes carry only the entity ID and synchronization metadata. Consumers
+       remove that ID directly without evaluating filters.
    - The replicator inserts the row and deletes it in the same transaction. Debezium reads the change log, not the table, so it still sees the insert, and the Outbox Event Router drops the delete. The table stays empty.
 4. **Debezium Server settings.** It is an off-the-shelf, self-hostable service configured only through properties:
    - **Postgres connector:**
@@ -165,7 +167,11 @@ Every 500 ms to 1 s, per entity type:
    - Check each stream's per-type sequence number. A gap means an event was lost, so reload the views of that type from Postgres.
    - If an ID appears several times, keep only its highest version.
 2. **Deletes:** remove the ID from every owned view that holds it. No query is needed.
-3. **Candidates:** a reverse index maps routing values (country IDs, connection IDs, airport IDs) to the owned views that depend on them. Both the old and the new values in each event are looked up, so an entity that moves out of a view is caught too.
+3. **Candidates:** each view declares the entity fields and relationships it
+   depends on. Workers compare those declarations with the keys in
+   `changes.old` and `changes.new`; both values are available when a relationship
+   moves. Related-entity events use registry-derived link queries to find root
+   IDs. Deletes remove the ID from every view that currently holds it.
 4. **Replica freshness.** At the start of the tick, read the primary's current change-log position (`pg_current_wal_lsn()`, a cheap call). Every event already read was committed before that position. Wait until the replica's replay position (`pg_last_wal_replay_lsn()`) has reached it, then query.
    - If the replica is more than about 2 s behind, run this tick's queries on the primary.
    - This covers related rows too (an airport, a country), which the per-entity version check alone cannot.
@@ -265,7 +271,8 @@ Rules:
 
 - **Batching:** at most one message per subscription per tick.
 - **Data sources:**
-  - map fields come from the event's `map_fields`, with no database read;
+  - changed map fields come from `changes.new`; unchanged values remain in the
+    worker's existing state, and inserts contain the complete business row;
   - window rows and detail come from the read replica by primary key, with the same version check as re-checks.
 - **Ordering:** the client applies a message only if its `seq` is exactly the last one plus 1. Otherwise it sends `resync`.
 - **Reconnect:**

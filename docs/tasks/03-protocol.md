@@ -46,14 +46,14 @@ Turns [contracts.md](../contracts.md) §1, §3 and §4 into code that every comp
 
 - **Depends on:** nothing
 - **Size:** S
-- **Files:** `packages/protocol/schema/outbox-event.v1.json`, `packages/protocol/src/outbox.ts`
+- **Files:** `packages/protocol/schema/outbox-event.v2.json`, `packages/protocol/src/outbox.ts`
 
 **Goal.** The replicator writes, and the workers read, exactly the event shape in contracts §1.
 
 **Deliverables**
 
 1. JSON Schema (draft 2020-12) for the payload in contracts §1.
-2. TypeScript types `OutboxEvent`, `OutboxOp`, `RoutingValues`.
+2. TypeScript types `OutboxEvent`, `OutboxOp`, `EntityChanges`.
 3. Functions:
    - `parseOutboxEvent(raw: string | object): Result<OutboxEvent>`, a fast validator compiled with ajv at build time or hand-written. Workers call it for every event, so it must handle 50,000 events/s on one core;
    - `buildOutboxEvent(...)`, used by the replicator.

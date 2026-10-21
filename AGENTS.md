@@ -26,7 +26,7 @@ A proof of concept for the design in `docs/architecture-plan.md`. The interfaces
 - **Tests are part of the task.** Unit tests next to code (`*.spec.ts`, Vitest). Integration tests use Testcontainers (T-01) and live under `test/integration/`.
 - **Commands from the repo root:** `npm run build`, `npm test`, `npm run typecheck`, `npm run lint`. All must pass before a PR.
 - **Toolchain:** Node 24 and npm 11. npm 11 blocks dependency install scripts unless they are listed under `allowScripts` in the root `package.json`. If a new dependency needs one, approve it with `npm install-scripts approve <pkg>` and commit the change.
-- **Domain for tests and examples:** countries, connections, airports, airplanes, airplane_crew (see `infra/postgres/init/02-schema.sql`).
+- **Domain for tests and examples:** customers, items, orders, distributors (see `infra/postgres/init/02-schema.sql`).
 
 ## Where things are
 

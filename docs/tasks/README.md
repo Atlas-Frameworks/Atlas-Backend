@@ -28,7 +28,7 @@ Each task can be picked up by one person or one coding agent and finished indepe
 | [05-view-service.md](05-view-service.md) | NestJS workers: streams, Postgres, owner runtime, WebSockets, cluster | S-01 – S-10 |
 | [06-client-sdk.md](06-client-sdk.md) | Browser SDK in a Web Worker and map adapters | C-01 – C-07 |
 | [07-client-app.md](07-client-app.md) | Angular app | A-01 – A-05 |
-| [08-replicator.md](08-replicator.md) | Write path: schema, write function, data simulator | W-01 – W-03 |
+| [08-replicator.md](08-replicator.md) | Write path: synchronization schema and local data tools | W-01 – W-03 |
 | [09-testing-poc.md](09-testing-poc.md) | Integration, correctness, load and failure testing; POC report | T-01 – T-06 |
 
 ## Suggested order
@@ -89,8 +89,8 @@ Size: S ≈ 1–2 days, M ≈ 3–5 days, L ≈ 1–2 weeks for one person.
 | A-04 | Layers panel: filters, grouping, live pages | A-02, C-03 | L | | todo |
 | A-05 | Detail drawer | A-02, C-03 | S | | todo |
 | W-01 | Final schema, roles and write function | I-01, P-02 | M | | todo |
-| W-02 | Replicator write path (NestJS) | W-01 | M | | todo |
-| W-03 | Data simulator and load profiles | W-02 | M | | todo |
+| W-02 | Postgres synchronization setup and commerce seed | W-01 | S | | todo |
+| W-03 | Update simulator and event listener | W-02, I-03 | S | | todo |
 | T-01 | Backend integration test environment | I-01, I-02, I-03 | M | | todo |
 | T-02 | End-to-end correctness checks | T-01, S-04 | M | | todo |
 | T-03 | Failover drills | T-01, S-07 | M | | todo |

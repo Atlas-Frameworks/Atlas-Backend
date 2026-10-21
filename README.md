@@ -11,7 +11,7 @@ A realtime view service that keeps thousands of browser clients in sync with ten
 
 ```mermaid
 flowchart LR
-  SIM[apps/replicator-sim<br/>NestJS] -->|entity + outbox, one transaction| PG[(Postgres 17<br/>primary + replica)]
+  SIM[apps/replicator-sim<br/>update simulator] -->|entity updates| PG[(Postgres 17<br/>primary + replica)]
   PG -->|change log| DBZ[Debezium Server]
   DBZ -->|changes:&lt;type&gt; streams| R[(Redis)]
   R --> VS[apps/view-service<br/>NestJS workers × 3–5]
@@ -26,7 +26,7 @@ flowchart LR
 | --- | --- | --- |
 | `apps/client` | Angular 22 app (standalone, zoneless) | A-01 – A-05 |
 | `apps/view-service` | NestJS workers: streams, views, WebSockets, cluster | S-01 – S-10 |
-| `apps/replicator-sim` | NestJS: the write path and a data simulator | W-01 – W-03 |
+| `apps/replicator-sim` | CLI scripts: simulate updates and inspect synchronization events | W-03 |
 | `packages/protocol` | Protobuf schemas, generated types, outbox event schema | P-01, P-02 |
 | `packages/view-engine` | Pure TS: registry, SQL compiler, dependency index, store, tick, hashing | E-01 – E-07 |
 | `packages/client-sdk` | Browser SDK running in a Web Worker, map adapter interface | C-01 – C-07 |
@@ -41,7 +41,10 @@ Requirements: Node 24 (`.nvmrc`), npm 11, Docker.
 npm ci
 npm run build
 npm test
-npm run infra:up        # Postgres, Redis, Debezium (see infra/README.md)
+npm run infra:up        # start Postgres, Redis, Debezium
+npm run postgres:setup  # create Debezium and synchronization objects
+npm run postgres:seed   # create commerce tables and initial data
 ```
 
-App-level dev commands arrive with task F-02.
+Use `npm run replicator:simulate` and `npm run replicator:watch` after setup.
+See [infra/README.md](infra/README.md) for the complete workflow.

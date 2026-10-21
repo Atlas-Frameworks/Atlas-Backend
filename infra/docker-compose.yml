@@ -28,7 +28,9 @@ services:
       - shared_preload_libraries=pg_stat_statements
     ports: ["5432:5432"]
     volumes:
-      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      - ./postgres/init/00-hba.sh:/docker-entrypoint-initdb.d/00-hba.sh:ro
+      - ./postgres/init/01-roles.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
+      - ./postgres/test:/test:ro
       - pg-primary:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d atlas"]
@@ -55,6 +57,7 @@ services:
     entrypoint: ["/bin/sh", "-c", "cp /config/redis.conf /data/redis.conf && exec redis-server /data/redis.conf"]
     volumes:
       - ./redis/redis.conf:/config/redis.conf:ro
+      - redis-primary:/data
     ports: ["6379:6379"]
 
   redis-replica:
@@ -62,6 +65,7 @@ services:
     entrypoint: ["/bin/sh", "-c", "cp /config/redis.conf /data/redis.conf && exec redis-server /data/redis.conf --replicaof redis-primary 6379"]
     volumes:
       - ./redis/redis.conf:/config/redis.conf:ro
+      - redis-replica:/data
     depends_on: [redis-primary]
 
   sentinel-1: &sentinel
@@ -84,7 +88,10 @@ services:
 
   # ---------- Debezium Server: outbox -> Redis Streams (task I-03) ----------
   debezium:
-    image: quay.io/debezium/server:3.7.0.Final
+    build:
+      context: ./debezium
+    image: atlas/debezium-server:3.7.0.Final
+    restart: unless-stopped
     volumes:
       - ./debezium/application.properties:/debezium/config/application.properties:ro
     depends_on:
@@ -97,3 +104,5 @@ services:
 volumes:
   pg-primary:
   pg-replica:
+  redis-primary:
+  redis-replica:

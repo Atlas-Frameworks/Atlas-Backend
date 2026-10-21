@@ -1,6 +1,6 @@
 #!/bin/bash
 # Streaming read replica for the POC (task I-01).
-# On first start it clones the primary with pg_basebackup and writes standby settings (-R).
+# On first start, it clones the primary with pg_basebackup and writes standby settings (-R).
 set -euo pipefail
 
 PGDATA=/var/lib/postgresql/data
