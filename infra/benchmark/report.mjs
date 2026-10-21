@@ -241,8 +241,8 @@ function renderMarkdown(report) {
     '',
     '## PostgreSQL deltas',
     '',
-    '| Pipeline | DB active time | WAL | WAL records | Commits | Cache hit | Inserts | Updates | Deletes | Deadlocks |',
-    '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+    '| Pipeline | DB active time | Read I/O | Write I/O | WAL | WAL records | Commits | Cache hit | Inserts | Updates | Deletes | Deadlocks |',
+    '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
     ...Object.entries(report.pipelines).map(([name, result]) => renderPostgresRow(name, result.postgres)),
     '',
     'Database and WAL counters include concurrent traffic on the same PostgreSQL database or cluster.',
@@ -264,21 +264,23 @@ function renderPostgresRow(name, postgres) {
   const tables = postgres.tables;
   const blockTotal = database.blocksHit + database.blocksRead;
   const cacheHit = blockTotal === 0 ? 'n/a' : `${(100 * database.blocksHit / blockTotal).toFixed(2)}%`;
-  return `| ${name} | ${formatDuration(database.activeTimeMilliseconds)} | ${formatBytes(postgres.wal.bytes)} | ${formatNumber(postgres.wal.records)} | ${formatNumber(database.xactCommit)} | ${cacheHit} | ${formatNumber(tables.tuplesInserted)} | ${formatNumber(tables.tuplesUpdated)} | ${formatNumber(tables.tuplesDeleted)} | ${database.deadlocks} |`;
+  return `| ${name} | ${formatDuration(database.activeTimeMilliseconds)} | ${formatDuration(database.blockReadMilliseconds)} | ${formatDuration(database.blockWriteMilliseconds)} | ${formatBytes(postgres.wal.bytes)} | ${formatNumber(postgres.wal.records)} | ${formatNumber(database.xactCommit)} | ${cacheHit} | ${formatNumber(tables.tuplesInserted)} | ${formatNumber(tables.tuplesUpdated)} | ${formatNumber(tables.tuplesDeleted)} | ${database.deadlocks} |`;
 }
 
 function renderTopStatements(pipelines) {
   return Object.entries(pipelines).flatMap(([name, result]) => {
     const rows = result.postgres.statements.slice(0, 5).map((statement) => {
       const mean = statement.calls === 0 ? 0 : statement.totalExecutionMilliseconds / statement.calls;
-      return `| ${formatNumber(statement.calls)} | ${statement.totalExecutionMilliseconds.toFixed(1)} ms | ${mean.toFixed(3)} ms | \`${escapeTable(statement.query.slice(0, 140))}\` |`;
+      const readIo = formatDuration(statement.sharedBlockReadMilliseconds);
+      const writeIo = formatDuration(statement.sharedBlockWriteMilliseconds);
+      return `| ${formatNumber(statement.calls)} | ${statement.totalExecutionMilliseconds.toFixed(1)} ms | ${mean.toFixed(3)} ms | ${readIo} | ${writeIo} | \`${escapeTable(statement.query.slice(0, 140))}\` |`;
     });
     return [
       `### ${name}`,
       '',
-      '| Calls | Total execution | Mean execution | Query |',
-      '| ---: | ---: | ---: | --- |',
-      ...(rows.length === 0 ? ['| 0 | 0 ms | 0 ms | Query metrics unavailable |'] : rows),
+      '| Calls | Total execution | Mean execution | Read I/O | Write I/O | Query |',
+      '| ---: | ---: | ---: | ---: | ---: | --- |',
+      ...(rows.length === 0 ? ['| 0 | 0 ms | 0 ms | 0 ms | 0 ms | Query metrics unavailable |'] : rows),
       '',
     ];
   });
