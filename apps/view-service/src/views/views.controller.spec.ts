@@ -9,6 +9,7 @@ import request from 'supertest';
 import type { App } from 'supertest/types.js';
 import { DbService } from '../db/db.service.js';
 import { ExampleModule } from '../example/example.module.js';
+import { DependencyIndex } from './dependency-index.js';
 import type { ViewLoader } from './view-loader.js';
 import { ViewRegistry } from './view-registry.js';
 import { ViewService } from './view.service.js';
@@ -17,8 +18,16 @@ import { HEARTBEAT_MS, ViewsController } from './views.controller.js';
 describe('ViewsController (observable)', () => {
   function setup() {
     const registry = new ViewRegistry();
-    const service = new ViewService(registry, {} as ViewLoader);
-    const controller = new ViewsController(registry, service);
+    const service = new ViewService(
+      registry,
+      {} as ViewLoader,
+      new DependencyIndex(),
+    );
+    const controller = new ViewsController(
+      registry,
+      service,
+      new DependencyIndex(),
+    );
     const view = registry.open('key', 'orders', { text: 'SELECT', values: [] });
     view.ids.set('a', 1);
     view.loaded = true;
@@ -144,6 +153,36 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
 
     stream.res.destroy();
     await vi.waitFor(() => expect(view.listeners.size).toBe(0));
+  });
+
+  it('lists open views with the dependencies they registered', async () => {
+    const opened = await request(app.getHttpServer())
+      .get('/orders?type=book')
+      .expect(200);
+
+    const res = await request(app.getHttpServer()).get('/views').expect(200);
+
+    expect(res.body).toEqual({
+      watchedTypes: ['orders', 'items'],
+      views: [
+        {
+          viewKey: opened.body.viewKey,
+          entityType: 'orders',
+          loaded: true,
+          total: 1,
+          seq: 0,
+          refCount: 1,
+          listeners: 0,
+          dependsOn: {
+            orders: { fields: ['item_id', 'customer_id'] },
+            items: {
+              fields: ['type', 'price'],
+              link: 'SELECT o.id FROM orders o WHERE o.item_id = ANY($1)',
+            },
+          },
+        },
+      ],
+    });
   });
 
   it('returns 404 UNKNOWN_VIEW for a view that is not open', async () => {

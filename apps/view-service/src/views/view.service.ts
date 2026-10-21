@@ -4,6 +4,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { queryKey, type QueryDefinition } from './define-query.js';
+import { DependencyIndex } from './dependency-index.js';
 import { toStatement } from './sql.js';
 import { ViewLoader } from './view-loader.js';
 import { ViewRegistry } from './view-registry.js';
@@ -25,11 +26,13 @@ export class ViewService {
   constructor(
     private readonly registry: ViewRegistry,
     private readonly loader: ViewLoader,
+    private readonly dependencies: DependencyIndex,
   ) {}
 
   /**
    * Opens the view for a query and its params, or joins the existing one.
    * Undefined params don't change the viewKey and are left to `build` to skip.
+   * Dependencies are registered before the load, so changes during it are seen.
    */
   async open<P>(query: QueryDefinition<P>, params: P): Promise<ViewSnapshot> {
     const view = this.registry.open(
@@ -37,6 +40,7 @@ export class ViewService {
       query.entityType,
       toStatement(query.build(params)),
     );
+    this.dependencies.add(view.viewKey, query.entityType, query.dependsOn);
     try {
       await this.loader.ensureLoaded(view);
     } catch (err) {

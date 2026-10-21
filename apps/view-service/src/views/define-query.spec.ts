@@ -6,7 +6,7 @@ describe('defineQuery', () => {
     const def = {
       name: 'spec-query',
       entityType: 'orders',
-      dependsOn: ['orders'],
+      dependsOn: { orders: { fields: ['name'] } },
       build: () => sql`SELECT 1`,
     };
 
@@ -17,7 +17,7 @@ describe('defineQuery', () => {
     const def = {
       name: 'spec-twice',
       entityType: 'orders',
-      dependsOn: [],
+      dependsOn: {},
       build: () => sql`SELECT 1`,
     };
     defineQuery(def);
@@ -25,6 +25,17 @@ describe('defineQuery', () => {
     expect(() => defineQuery(def)).toThrow(
       'query spec-twice is already defined',
     );
+  });
+
+  it('refuses a related type without a link', () => {
+    expect(() =>
+      defineQuery({
+        name: 'spec-no-link',
+        entityType: 'orders',
+        dependsOn: { items: { fields: ['price'] } },
+        build: () => sql`SELECT 1`,
+      }),
+    ).toThrow('query spec-no-link: dependency items needs a link');
   });
 });
 

@@ -11,17 +11,42 @@ export interface QueryDefinition<P> {
   name: string;
   /** The entity type whose ids the query returns. */
   entityType: string;
-  /** Entity types whose changes can change the result (used from step 5). */
-  dependsOn: string[];
+  /**
+   * Entity types whose changes can change the result, keyed by type.
+   * `entityType` itself is always watched, even when it is not listed.
+   */
+  dependsOn: Record<string, Dependency>;
   build(params: P): Sql;
+}
+
+/** How a query depends on one entity type. */
+export interface Dependency {
+  /**
+   * Fields of this type the SQL reads. A change to any other field can't change
+   * the result. Leave it out to re-check on every change (always safe).
+   */
+  fields?: string[];
+  /**
+   * Required for a type other than `entityType`: SQL returning the `id` of
+   * every `entityType` row linked to the changed ids of this type.
+   */
+  link?: (ids: string[]) => Sql;
 }
 
 const names = new Set<string>();
 
-/** Registers a query. Throws if the name is taken, so two queries never share views. */
+/**
+ * Registers a query. Throws if the name is taken, so two queries never share
+ * views, or if a related type has no link, so its changes can't be missed.
+ */
 export function defineQuery<P>(def: QueryDefinition<P>): QueryDefinition<P> {
   if (names.has(def.name)) {
     throw new Error(`query ${def.name} is already defined`);
+  }
+  for (const [type, dep] of Object.entries(def.dependsOn)) {
+    if (type !== def.entityType && dep.link === undefined) {
+      throw new Error(`query ${def.name}: dependency ${type} needs a link`);
+    }
   }
   names.add(def.name);
   return def;

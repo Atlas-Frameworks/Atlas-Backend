@@ -1,3 +1,4 @@
+import { DependencyIndex } from './dependency-index.js';
 import type { ViewLoader } from './view-loader.js';
 import { ViewRegistry } from './view-registry.js';
 import { ViewService } from './view.service.js';
@@ -5,7 +6,11 @@ import type { ViewEvent } from './view.js';
 
 function setup() {
   const registry = new ViewRegistry();
-  const service = new ViewService(registry, {} as ViewLoader);
+  const service = new ViewService(
+    registry,
+    {} as ViewLoader,
+    new DependencyIndex(),
+  );
   const view = registry.open('key', 'orders', { text: 'SELECT', values: [] });
   view.ids.set('a', 1).set('b', 2);
   return { service, view };
