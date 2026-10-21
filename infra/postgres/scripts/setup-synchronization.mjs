@@ -4,7 +4,6 @@ import path from 'node:path';
 import {
   projectRoot,
   runPsql,
-  waitForDebeziumSlot,
   waitForPostgres,
 } from './docker-postgres.mjs';
 
@@ -20,10 +19,7 @@ async function main() {
   );
 
   await runPsql(['BEGIN;', ...sqlParts, 'COMMIT;'].join('\n\n'));
-  console.log('Debezium tables, publication, and synchronization functions are ready.');
-
-  await waitForDebeziumSlot();
-  console.log('Debezium replication slot is ready.');
+  console.log('Durable outbox tables and synchronization functions are ready.');
 }
 
 try {

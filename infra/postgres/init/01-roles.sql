@@ -3,11 +3,13 @@
 -- debezium        : logical replication reader for the outbox only
 -- atlas_writer    : the ONLY role allowed to write entity tables (used by the replicator service)
 -- atlas_reader    : read-only role used by view-service workers
+-- atlas_publisher : claims durable outbox events and publishes them to Redis
 
 CREATE ROLE replicator WITH LOGIN REPLICATION PASSWORD 'replicator';
 CREATE ROLE debezium WITH LOGIN REPLICATION PASSWORD 'debezium';
 CREATE ROLE atlas_writer WITH LOGIN PASSWORD 'atlas_writer';
 CREATE ROLE atlas_reader WITH LOGIN PASSWORD 'atlas_reader';
+CREATE ROLE atlas_publisher WITH LOGIN PASSWORD 'atlas_publisher';
 
 -- Allow the replica to connect for streaming replication.
 -- (The official image already allows host connections from the compose network.)

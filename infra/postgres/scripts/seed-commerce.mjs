@@ -4,7 +4,6 @@ import path from 'node:path';
 import {
   projectRoot,
   runPsql,
-  waitForDebeziumSlot,
   waitForPostgres,
 } from './docker-postgres.mjs';
 
@@ -12,7 +11,6 @@ const rollBack = process.argv.includes('--rollback');
 
 async function main() {
   await waitForPostgres();
-  await waitForDebeziumSlot(1);
 
   const sqlFiles = [
     path.join(projectRoot, 'infra/postgres/init/02-schema.sql'),

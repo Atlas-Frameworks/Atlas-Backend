@@ -1,6 +1,6 @@
--- Generic entity synchronization. This file has no dependency on application
--- tables. Register each application table after creating it with
--- register_synced_table(); its changes then flow through outbox -> Debezium -> Redis.
+-- Generic entity synchronization. Each registered application table receives a
+-- durable, entity-specific outbox. Sequence allocation happens after commit in
+-- the publisher and never blocks the business transaction.
 
 CREATE OR REPLACE FUNCTION build_entity_changes(
   p_old_row jsonb,
@@ -59,28 +59,19 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
   resolved_entity_type text := TG_ARGV[0];
+  resolved_outbox_table regclass := TG_ARGV[1]::regclass;
   old_row jsonb := CASE WHEN TG_OP = 'INSERT' THEN '{}'::jsonb ELSE to_jsonb(OLD) END;
   new_row jsonb := CASE WHEN TG_OP = 'DELETE' THEN '{}'::jsonb ELSE to_jsonb(NEW) END;
   entity_id uuid;
   entity_version bigint;
-  event_sequence bigint;
-  outbox_id bigint;
 BEGIN
   entity_id := COALESCE(new_row ->> 'id', old_row ->> 'id')::uuid;
   entity_version := COALESCE(new_row ->> 'version', old_row ->> 'version')::bigint;
 
-  UPDATE entity_type_sequence AS sequence
-  SET seq = sequence.seq + 1
-  WHERE sequence.entity_type = resolved_entity_type
-  RETURNING sequence.seq INTO event_sequence;
-
-  IF event_sequence IS NULL THEN
-    RAISE EXCEPTION 'Missing entity_type_sequence row for %', resolved_entity_type;
-  END IF;
-
-  INSERT INTO outbox (aggregatetype, aggregateid, payload)
-  VALUES (
-    resolved_entity_type,
+  EXECUTE format(
+    'INSERT INTO %s (aggregate_id, payload) VALUES ($1, $2)',
+    resolved_outbox_table
+  ) USING
     entity_id::text,
     jsonb_build_object(
       'schema', 2,
@@ -88,16 +79,11 @@ BEGIN
       'id', entity_id,
       'op', CASE WHEN TG_OP = 'DELETE' THEN 'delete' ELSE 'upsert' END,
       'version', entity_version,
-      'typeSeq', event_sequence,
-      'committedAt', now()
+      'committedAt', clock_timestamp()
     ) || CASE
       WHEN TG_OP = 'DELETE' THEN '{}'::jsonb
       ELSE jsonb_build_object('changes', build_entity_changes(old_row, new_row))
-    END
-  )
-  RETURNING id INTO outbox_id;
-
-  DELETE FROM outbox WHERE id = outbox_id;
+    END;
   RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
 END;
 $$;
@@ -113,6 +99,9 @@ DECLARE
   schema_name text;
   table_name text;
   resolved_entity_type text;
+  outbox_name text;
+  qualified_outbox_name text;
+  outbox_table regclass;
 BEGIN
   SELECT namespace.nspname, class.relname
   INTO schema_name, table_name
@@ -126,6 +115,8 @@ BEGIN
   END IF;
 
   resolved_entity_type := COALESCE(p_entity_type, table_name);
+  outbox_name := table_name || '_outbox';
+  qualified_outbox_name := format('%I.%I', schema_name, outbox_name);
 
   IF NOT EXISTS (
     SELECT 1
@@ -156,9 +147,31 @@ BEGIN
     table_name
   );
 
-  INSERT INTO entity_type_sequence (entity_type)
-  VALUES (resolved_entity_type)
-  ON CONFLICT (entity_type) DO NOTHING;
+  EXECUTE format(
+    'CREATE TABLE IF NOT EXISTS %s (
+       event_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+       aggregate_id text NOT NULL,
+       payload jsonb NOT NULL,
+       event_sequence bigint UNIQUE,
+       published_at timestamptz,
+       created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+     )',
+    qualified_outbox_name
+  );
+  EXECUTE format(
+    'CREATE INDEX IF NOT EXISTS %I ON %s (event_sequence NULLS FIRST, event_id)
+     WHERE published_at IS NULL',
+    outbox_name || '_pending_idx',
+    qualified_outbox_name
+  );
+  EXECUTE format('GRANT INSERT ON %s TO atlas_writer', qualified_outbox_name);
+  outbox_table := qualified_outbox_name::regclass;
+
+  INSERT INTO synchronized_entity_types (entity_type, source_table, outbox_table)
+  VALUES (resolved_entity_type, p_table, outbox_table)
+  ON CONFLICT (entity_type) DO UPDATE
+  SET source_table = EXCLUDED.source_table,
+      outbox_table = EXCLUDED.outbox_table;
 
   EXECUTE format('DROP TRIGGER IF EXISTS atlas_manage_version ON %I.%I', schema_name, table_name);
   EXECUTE format('DROP TRIGGER IF EXISTS atlas_sync_change ON %I.%I', schema_name, table_name);
@@ -170,10 +183,11 @@ BEGIN
   );
   EXECUTE format(
     'CREATE TRIGGER atlas_sync_change AFTER INSERT OR UPDATE OR DELETE ON %I.%I '
-    'FOR EACH ROW EXECUTE FUNCTION sync_entity_change(%L)',
+    'FOR EACH ROW EXECUTE FUNCTION sync_entity_change(%L, %L)',
     schema_name,
     table_name,
-    resolved_entity_type
+    resolved_entity_type,
+    qualified_outbox_name
   );
 END;
 $$;

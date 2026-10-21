@@ -1,50 +1,41 @@
 \set ON_ERROR_STOP on
 
-CREATE TEMP TABLE captured_events (
-  capture_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  payload jsonb NOT NULL
-);
+BEGIN;
 
-CREATE FUNCTION pg_temp.capture_outbox_event()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
+DO $$
 BEGIN
-  INSERT INTO captured_events (payload) VALUES (OLD.payload);
-  RETURN OLD;
+  ASSERT has_function_privilege(
+    'atlas_publisher',
+    'claim_sync_events(text,text,integer,integer)',
+    'EXECUTE'
+  ), 'publisher role must be allowed to claim events';
+  ASSERT NOT has_function_privilege(
+    'atlas_writer',
+    'claim_sync_events(text,text,integer,integer)',
+    'EXECUTE'
+  ), 'writer role must not be allowed to claim events';
 END;
 $$;
 
-CREATE TRIGGER capture_outbox_event
-BEFORE DELETE ON outbox
-FOR EACH ROW EXECUTE FUNCTION pg_temp.capture_outbox_event();
-
-INSERT INTO items (id, price, type)
-VALUES ('00000000-0000-0000-0000-000000000101', 10.00, 'book');
-
-UPDATE items
-SET price = 20.00
-WHERE id = '00000000-0000-0000-0000-000000000101';
-
-UPDATE items
-SET price = 20.00
-WHERE id = '00000000-0000-0000-0000-000000000101';
-
-DELETE FROM items
-WHERE id = '00000000-0000-0000-0000-000000000101';
-
-CREATE TABLE test_entities (
+CREATE TABLE publisher_test_entities (
   id uuid PRIMARY KEY,
   label text NOT NULL,
   enabled boolean NOT NULL
 );
-SELECT register_synced_table('public.test_entities');
+SELECT register_synced_table('public.publisher_test_entities');
 
-INSERT INTO test_entities (id, label, enabled)
+INSERT INTO publisher_test_entities (id, label, enabled)
 VALUES ('00000000-0000-0000-0000-000000000102', 'first', true);
 
-UPDATE test_entities
+UPDATE publisher_test_entities
 SET label = 'second'
+WHERE id = '00000000-0000-0000-0000-000000000102';
+
+UPDATE publisher_test_entities
+SET label = 'second'
+WHERE id = '00000000-0000-0000-0000-000000000102';
+
+DELETE FROM publisher_test_entities
 WHERE id = '00000000-0000-0000-0000-000000000102';
 
 DO $$
@@ -53,25 +44,26 @@ DECLARE
   update_event jsonb;
   no_op_event jsonb;
   delete_event jsonb;
-  registered_insert_event jsonb;
 BEGIN
-  SELECT payload INTO insert_event FROM captured_events WHERE capture_id = 1;
-  SELECT payload INTO update_event FROM captured_events WHERE capture_id = 2;
-  SELECT payload INTO no_op_event FROM captured_events WHERE capture_id = 3;
-  SELECT payload INTO delete_event FROM captured_events WHERE capture_id = 4;
-  SELECT payload INTO registered_insert_event FROM captured_events WHERE capture_id = 5;
+  SELECT payload INTO insert_event FROM publisher_test_entities_outbox WHERE event_id = 1;
+  SELECT payload INTO update_event FROM publisher_test_entities_outbox WHERE event_id = 2;
+  SELECT payload INTO no_op_event FROM publisher_test_entities_outbox WHERE event_id = 3;
+  SELECT payload INTO delete_event FROM publisher_test_entities_outbox WHERE event_id = 4;
 
-  ASSERT (SELECT count(*) FROM captured_events) = 6,
-    'expected six captured events';
+  ASSERT (SELECT count(*) FROM publisher_test_entities_outbox) = 4,
+    'expected four durable events';
+  ASSERT NOT insert_event ? 'typeSeq',
+    'business writes must not allocate typeSeq';
   ASSERT insert_event ->> 'schema' = '2',
     'insert must use event schema 2';
   ASSERT insert_event -> 'changes' -> 'old' = '{}'::jsonb,
     'insert old values must be empty';
-  ASSERT insert_event -> 'changes' -> 'new' = '{"price": 10.00, "type": "book"}'::jsonb,
+  ASSERT insert_event -> 'changes' -> 'new' =
+    '{"label": "first", "enabled": true}'::jsonb,
     'insert must contain every business field';
-  ASSERT update_event -> 'changes' -> 'old' = '{"price": 10.00}'::jsonb,
+  ASSERT update_event -> 'changes' -> 'old' = '{"label": "first"}'::jsonb,
     'update must contain only the old changed value';
-  ASSERT update_event -> 'changes' -> 'new' = '{"price": 20.00}'::jsonb,
+  ASSERT update_event -> 'changes' -> 'new' = '{"label": "second"}'::jsonb,
     'update must contain only the new changed value';
   ASSERT no_op_event -> 'changes' = '{"old": {}, "new": {}}'::jsonb,
     'no-op update must still emit an empty diff';
@@ -81,16 +73,37 @@ BEGIN
     'delete operation missing';
   ASSERT NOT delete_event ? 'changes',
     'delete must not contain changes';
-  ASSERT registered_insert_event ->> 'type' = 'test_entities',
-    'registered table must use its table name as the entity type';
-  ASSERT registered_insert_event -> 'changes' -> 'new' =
-    '{"label": "first", "enabled": true}'::jsonb,
-    'registered table insert must contain its business fields';
-  ASSERT (SELECT version FROM test_entities) = 2,
-    'registered table update must increment version';
-  ASSERT (SELECT seq FROM entity_type_sequence WHERE entity_type = 'items') = 4,
-    'items sequence must count every event';
-  ASSERT (SELECT seq FROM entity_type_sequence WHERE entity_type = 'test_entities') = 2,
-    'registered table sequence must count every event';
 END;
 $$;
+
+CREATE TEMP TABLE claimed_test_events AS
+SELECT * FROM claim_sync_events('publisher_test_entities', 'publisher-a', 100, 30);
+
+DO $$
+BEGIN
+  ASSERT (SELECT count(*) FROM claimed_test_events) = 4,
+    'publisher must claim all events';
+  ASSERT (SELECT array_agg((payload ->> 'typeSeq')::bigint ORDER BY event_id)
+          FROM claimed_test_events) = ARRAY[1, 2, 3, 4]::bigint[],
+    'publisher must allocate a gapless batch sequence';
+  ASSERT (SELECT last_sequence FROM synchronized_entity_types
+          WHERE entity_type = 'publisher_test_entities') = 4,
+    'registry must persist the allocated sequence';
+  ASSERT NOT EXISTS (
+    SELECT 1 FROM claim_sync_events('publisher_test_entities', 'publisher-b', 100, 30)
+  ), 'another publisher must not take over an active lease';
+  ASSERT mark_sync_events_published(
+    'publisher_test_entities',
+    'publisher-a',
+    ARRAY(SELECT event_id FROM claimed_test_events)
+  ) = 4, 'publisher must delete its published events';
+  ASSERT NOT EXISTS (
+    SELECT 1 FROM claim_sync_events('publisher_test_entities', 'publisher-a', 100, 30)
+  ), 'published events must not be claimed again';
+  ASSERT NOT EXISTS (
+    SELECT 1 FROM publisher_test_entities_outbox
+  ), 'published events must not remain in the outbox';
+END;
+$$;
+
+ROLLBACK;
