@@ -1,6 +1,6 @@
 # 01 · Foundation
 
-Repo tooling every other task relies on. Current state: an npm-workspaces monorepo (`apps/*`, `packages/*`), an Angular 22 app in `apps/client`, NestJS 12 apps in `apps/view-service` and `apps/replicator-sim`, and three empty TypeScript packages. Everything builds and the generated tests pass with Node 24 and npm 11.
+Repo tooling every other task relies on. Current state: an npm-workspaces monorepo (`apps/*`, `packages/*`), an Angular 22 app in `apps/client`, a NestJS 12 app in `apps/view-service`, dependency-free Node.js scripts in `apps/replicator-sim`, and three TypeScript packages.
 
 ---
 
@@ -80,7 +80,7 @@ Repo tooling every other task relies on. Current state: an npm-workspaces monore
    - `loadConfig(schema)`: typed env loading and validation with zod or valibot. Fail fast with a clear message listing every missing or invalid variable.
    - `createLogger(name)`: structured JSON logs (pino) with `service`, `worker`, `traceId` fields; pretty output when `NODE_ENV=development`.
    - Error types: `RetryableError`, `FatalError`, `InvalidInputError` with an error `code`.
-2. Used by `view-service` and `replicator-sim`, replacing the generated Nest logger with a pino adapter.
+2. Used by `view-service`, replacing the generated Nest logger with a pino adapter. The command-line scripts in `replicator-sim` use standard output directly.
 
 **Acceptance criteria**
 

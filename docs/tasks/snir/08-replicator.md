@@ -1,102 +1,107 @@
-# 08 · Write path and replicator (`apps/replicator-sim`, NestJS)
+# 08 · Postgres write path and synchronization tools
 
-In production the replicator polls third-party sources and is the **only** writer to Postgres. For the POC, `replicator-sim` plays that role: it generates realistic data and changes, and writes them exactly as the real replicator must, so the real replicator can later adopt the same write module.
+Postgres setup and initial commerce data live under `infra/postgres`.
+`replicator-sim` contains only the continuous update simulator and the
+Debezium-to-Redis event listener. Postgres triggers own event and version
+bookkeeping; the scripts do not construct outbox events themselves.
 
-Plan section: "Write path: replicator to Redis Stream". Contract: [contracts.md](../../contracts.md) §1.
+Plan section: "Write path: replicator to Redis Stream". Contract:
+[contracts.md](../contracts.md) §1.
 
 ---
 
-## W-01 · Final schema, roles and write function
+## W-01 · Commerce schema and generic synchronization
 
 - **Depends on:** I-01, P-02
 - **Size:** M
-- **Files:** `infra/postgres/init/*.sql`, later migrations in `apps/replicator-sim/migrations/`
+- **Files:** `infra/postgres/init/*.sql`
 
-**Goal.** A schema where every committed change produces exactly one correct outbox event, and nothing else can write.
+**Goal.** Every committed insert, update, or delete on a registered commerce
+table produces exactly one event with an entity version and a gapless sequence
+for that entity type.
 
 **Deliverables**
 
-1. **Review and finalize** the starter schema:
-   - countries, connections + connection_countries, airports (nested `details` JSONB), airplanes (nested JSONB), airplane_crew child table;
-   - indexes for every registry field from E-01, including expression indexes for JSONB `->>` and the `jsonb_array_length` filters, and trigram for `callsign`.
-2. **Migration tooling:** node-pg-migrate or plain numbered SQL run at startup. Pick one and document it. The compose init scripts then only create the database and roles.
-3. **Roles and grants:**
-   - only `atlas_writer` can write entity tables, `outbox` and `entity_type_sequence`;
-   - `atlas_reader` is read-only;
-   - `debezium` can read the outbox and has replication rights.
-4. **The write contract,** documented in `apps/replicator-sim/README.md` and implemented in W-02. In one transaction:
-   1. write the entity and any child rows;
-   2. `UPDATE <root> SET version = version + 1`, once per root per transaction;
-   3. `UPDATE entity_type_sequence SET seq = seq + 1 WHERE entity_type = $type RETURNING seq` (the row lock makes the sequence gapless and commit-ordered);
-   4. `INSERT INTO outbox ... RETURNING id`;
-   5. `DELETE FROM outbox WHERE id = $id`.
-5. **Decide and document** what happens when one transaction changes several roots. Recommended: one outbox event per changed root, each with its own `typeSeq`.
+1. Tables for `customers`, `items`, `orders`, and `distributors`, with UUID IDs
+   and their declared relationships.
+2. Writer, reader, and Debezium roles with least-privilege grants.
+3. Generic `register_synced_table(regclass)` registration for tables with an
+   `id uuid` column.
+4. A `BEFORE` trigger that initializes or increments `version` and updates
+   `updated_at`.
+5. An `AFTER` trigger that allocates `typeSeq`, writes the outbox record, and
+   removes it in the same transaction after the WAL-visible change is created.
+6. Upsert events containing `changes.old` and `changes.new`; delete events carry
+   only the deleted entity ID and synchronization metadata.
 
 **Acceptance criteria**
 
-- [ ] `atlas_reader` gets "permission denied" writing any table.
-- [ ] Concurrent writers (10 parallel transactions) produce a gapless `typeSeq` per type in commit order. Verify in the Redis stream after I-03.
+- [ ] `atlas_reader` cannot write application or synchronization tables.
+- [ ] Inserts, updates, and deletes reach `changes:<entityType>` through
+      Debezium with the expected version and `typeSeq`.
+- [ ] Concurrent writes produce a gapless sequence per entity type.
 
 ---
 
-## W-02 · Replicator write path (NestJS)
+## W-02 · Postgres synchronization setup and commerce seed
 
 - **Depends on:** W-01
-- **Size:** M
-- **Folder:** `apps/replicator-sim/src/write/`
+- **Size:** S
+- **Folder:** `infra/postgres/`
 
-**Goal.** A reusable write module that implements the write contract and builds correct outbox events, including routing values and affected roots.
+**Goal.** Create a useful initial data set through the same database triggers as
+normal writes.
 
 **Deliverables**
 
-1. **`EntityWriter` service** with `upsertAirplane`, `updateAirplanePosition`, `setCrew`, `upsertAirport`, `moveAirport` (change country), `upsertCountry`, `upsertConnection` (with countries and criteria), and `delete*`. Each runs one transaction per the W-01 contract.
-2. **Event payloads** built with `buildOutboxEvent` (P-02):
-   - `map` fields for airplanes and airports;
-   - `routing.old` and `routing.new`, read with `SELECT ... FOR UPDATE` before the change;
-   - `affectedRoots` for related changes. Example: an airport change lists the airplane ids with `airport_id` = that airport, old and new, so views linked through the airport re-check them.
-3. **Batching:** `updatePositions(batch)` writes up to 500 airplanes per transaction. Each airplane still gets its own version bump, sequence number and outbox event, all within the one transaction.
-4. **Postgres pool** using `atlas_writer`, with retries on serialization and connection errors.
-5. **Debug HTTP:** `POST /dev/write/...` to trigger single changes by hand (used by the tests).
+1. `postgres:setup` waits for an already-started Postgres container and creates
+   the technical Debezium tables, publication, and generic synchronization
+   functions without creating application tables.
+2. `postgres:seed` creates the commerce tables, registers their triggers, and
+   inserts 30 customers, 100 items, 40 orders, and 5 distributors.
+3. Neither command starts Docker; infrastructure startup remains `infra:up`.
+4. Every order references one generated customer and item. Every distributor
+   receives between 1 and 20 distinct generated order IDs.
+5. Every inserted row explicitly starts at version `1`.
+6. Both schemas are idempotent. `postgres:seed -- --rollback` keeps the tables
+   and triggers but validates the generated data without committing rows.
 
 **Acceptance criteria**
 
-- [ ] Integration test against Postgres: after each method, the outbox insert (seen through a test logical replication slot, or Redis after I-03) has the right `version`, `typeSeq`, `routing` and `affectedRoots`.
-- [ ] 6,000 position updates per second sustained on a laptop. Record the number.
+- [ ] `npm run postgres:setup` creates the synchronization infrastructure and a
+      usable Debezium replication slot without creating commerce tables.
+- [ ] `npm run postgres:seed` creates the commerce domain and inserts one
+      complete independent batch.
+- [ ] `npm run postgres:seed -- --rollback` creates any missing domain objects
+      but does not change application row counts.
 
 ---
 
-## W-03 · Data simulator and load profiles
+## W-03 · Update simulator and synchronization listener
 
-- **Depends on:** W-02
-- **Size:** M
-- **Folder:** `apps/replicator-sim/src/sim/`
+- **Depends on:** W-02, I-03
+- **Size:** S
+- **Folder:** `apps/replicator-sim/scripts/`
 
-**Goal.** Realistic, repeatable data and change load for development, end-to-end checks and the load test.
+**Goal.** Exercise and inspect the complete Postgres → Debezium → Redis flow
+during local development.
 
 **Deliverables**
 
-1. **Seeder:**
-   - ~250 countries in regions, ~4,000 airports with runways, ~30,000 airplanes with crew, ~200 connections listing countries plus criteria;
-   - deterministic from a seed.
-2. **Change loop:**
-   - airplanes move every 5–10 s (position, altitude, heading, speed);
-   - occasional airline or kind changes;
-   - crew changes;
-   - airports change slowly (runways, sometimes country);
-   - connections are edited every few minutes;
-   - occasional deletes and creations.
-3. **Profiles via `SIM_PROFILE`:**
-   - `dev`: 3,000 airplanes;
-   - `base`: 30,000 airplanes, about 4,000 events/s;
-   - `peak`: 2× rates;
-   - `burst`: 10 s spikes.
-4. **Dev endpoints** used by the client login stub (A-01) and tests:
-   - `GET /dev/scopes`: lists countries and connections;
-   - `POST /dev/token`: issues a dev JWT signed with the shared dev key, holding `allowedCountries` and `allowedConnections`;
-   - `POST /dev/access/revoke`: writes to `<svc>:access`.
-5. **Metrics:** events written per second by type.
+1. `data-update-simulator.mjs` independently updates random item prices,
+   customer addresses, order item/customer references, and distributor order
+   lists at configurable intervals and batch sizes.
+2. `--once` runs one update cycle for every type; `--once --rollback` performs a
+   non-persistent smoke test.
+3. `sync-event-listener.mjs` checks Debezium health and prints decoded events
+   from the configured `changes:<entityType>` Redis Streams.
+4. The listener defaults to the four commerce entity types, supports additional
+   types through `SYNC_ENTITY_TYPES`, starts at new events by default, and
+   supports `--history` and `--once`.
 
 **Acceptance criteria**
 
-- [ ] `SIM_PROFILE=base` runs for 1 hour with a steady event rate. Record CPU and Postgres load.
-- [ ] Re-seeding with the same seed produces identical data.
+- [ ] `npm run replicator:simulate -- --once --rollback` successfully exercises
+      all four update statements without persisting changes.
+- [ ] `npm run replicator:watch -- --history --once` prints available Redis
+      events and exits successfully.

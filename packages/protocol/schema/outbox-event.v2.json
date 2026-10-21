@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.local/schema/outbox-event.v2.json",
+  "title": "Atlas outbox event v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "type",
+    "id",
+    "op",
+    "version",
+    "typeSeq",
+    "committedAt"
+  ],
+  "properties": {
+    "schema": {
+      "const": 2
+    },
+    "type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "op": {
+      "enum": ["upsert", "delete"]
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "typeSeq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "committedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "changes": {
+      "$ref": "#/$defs/changes"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "upsert"
+          }
+        },
+        "required": ["op"]
+      },
+      "then": {
+        "required": ["changes"]
+      },
+      "else": {
+        "not": {
+          "required": ["changes"]
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "changes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["old", "new"],
+      "properties": {
+        "old": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "new": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

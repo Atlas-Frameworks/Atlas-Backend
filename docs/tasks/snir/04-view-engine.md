@@ -22,7 +22,7 @@ Use the POC domain from `infra/postgres/init/02-schema.sql` (countries, connecti
 2. `defineRegistry(types)`, which checks the registry itself at startup:
    - unique names;
    - each join's related type exists;
-   - every field used in `routingFields` exists;
+   - every field used by a scope, filter or relationship exists;
    - group and sort fields are flagged.
 3. `validateFilter(registry, type, tree)`:
    - enforces contracts §5: known fields, allowed operators per field, value types, the limits (depth 4, 20 conditions, `in` ≤ 200, `contains` ≥ 3 characters);
@@ -90,14 +90,16 @@ Use the POC domain from `infra/postgres/init/02-schema.sql` (countries, connecti
 
 **Deliverables**
 
-1. `DependencyIndex.add(view)` / `remove(viewKey)`. It indexes each view by:
-   - **its own type's routing values** used in its scope or filter, e.g. `country_id ∈ {…}` for a countries scope;
-   - **related types it joins to:** airports, countries via airport, connection by id.
+1. `DependencyIndex.add(view)` / `remove(viewKey)`. It records the fields each
+   view depends on for its scope, filter, layout and related joins.
 2. `candidates(evt)`:
-   - **For an event of the view's own type:** views whose routing values match `routing.old` or `routing.new`, so entities moving out of a view are caught. A view with no indexable restriction is always a candidate.
-   - **For an event of a related type** (airport, country, connection): the affected views plus the root IDs to re-check:
-     - if `evt.affectedRoots` is present, use those IDs;
-     - otherwise return a "link query" description (`airplanes WHERE airport_id = ANY($changedAirportIds)`), using both old and new link values, for the worker to run;
+   - **For an event of the view's own type:** inspect the field names in
+     `changes.old` and `changes.new`. Re-check views that depend on a changed
+     field and update any view that already holds the entity ID. An insert has
+     every business field in `changes.new`; a delete removes the ID directly.
+   - **For an event of a related type** (airport, country, connection): return
+     the affected views plus a registry-derived link query description
+     (`airplanes WHERE airport_id = ANY($changedAirportIds)`) for the worker;
      - for a connection change, the views using that connection, marked `fullRun: true`.
 3. All of this is derived from the registry; no per-type special cases in code.
 
@@ -206,7 +208,7 @@ Use the POC domain from `infra/postgres/init/02-schema.sql` (countries, connecti
 **Deliverables**
 
 1. **Generator** for random but valid sequences of operations on the POC schema:
-   - entity updates (including routing changes);
+   - entity updates (including relationship-field changes);
    - child-row changes;
    - airport moves;
    - country region changes;

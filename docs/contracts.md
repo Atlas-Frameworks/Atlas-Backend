@@ -6,34 +6,30 @@ The full design and its reasoning are in [architecture-plan.md](architecture-pla
 
 ## 1. Outbox event payload (replicator → outbox → Debezium → Redis)
 
-Written by the replicator (task W-02) in the same transaction as the entity change. Debezium's Outbox Event Router copies `payload` into the stream entry `changes:<aggregatetype>`. JSON schema file: `packages/protocol/schema/outbox-event.v1.json` (task P-02).
+Written by the database synchronization trigger in the same transaction as the entity change. Debezium's Outbox Event Router copies `payload` into the stream entry `changes:<aggregatetype>`. JSON schema file: `packages/protocol/schema/outbox-event.v2.json` (task P-02).
 
 ```json
 {
-  "schema": 1,
-  "type": "airplanes",
+  "schema": 2,
+  "type": "items",
   "id": "7f1c2a9e-...-uuid",
   "op": "upsert",
   "version": 42,
   "typeSeq": 918273,
   "committedAt": "2026-10-20T10:15:03.123Z",
-  "map": { "lat": 32.01, "lon": 34.88, "alt": 11200, "heading": 271.5, "icon": 3, "label": "LY001" },
-  "routing": {
-    "old": { "country_id": "uuid-A", "airport_id": "uuid-X" },
-    "new": { "country_id": "uuid-A", "airport_id": "uuid-Y" }
-  },
-  "affectedRoots": null
+  "changes": {
+    "old": { "price": 50.25 },
+    "new": { "price": 72.90 }
+  }
 }
 ```
 
 | Field | Meaning |
 | --- | --- |
-| `op` | `upsert` or `delete`. A delete carries the last known `routing.old` and `routing.new` (equal). |
-| `version` | Root entity version, incremented on any change to the entity or its child rows. Consumers ignore versions they already applied. |
+| `op` | `upsert` or `delete`. A delete contains the entity `id` and no `changes`; consumers remove that ID from every local result that contains it. |
+| `version` | Entity version, incremented on every update, including an update that writes the same business values. Consumers ignore versions they already applied. |
 | `typeSeq` | Gapless, commit-ordered sequence per entity type (from `entity_type_sequence`). A gap means a lost event: reload that type's views. |
-| `map` | Render fields only, so workers never read Postgres for map updates. `null` for types not shown on the map. |
-| `routing` | Old and new values of the fields that decide view membership (declared per type in the field registry). |
-| `affectedRoots` | For related entities (airport, country, connection): the root entities whose views must be re-checked, e.g. `{ "airplanes": ["uuid", ...] }`. `null` when not applicable. Optional optimization; the registry links are the fallback. |
+| `changes` | Present on `upsert` only. On insert, `new` contains every business field and `old` is empty. On update, each object contains only fields whose values differ. A no-op update carries two empty objects. Technical fields `id`, `version`, and `updated_at` are excluded. |
 
 ## 2. Redis keys
 
@@ -119,7 +115,6 @@ export interface EntityTypeDef {
   joins: Record<string, JoinDef>;   // e.g. airport: { sql: "LEFT JOIN airports ap ON ap.id = a.airport_id", relatedType: "airports", link: { column: "airport_id", relatedColumn: "id" } }
   fields: FieldDef[];
   scope: ScopeDef;                  // how countries / connection restrict this type
-  routingFields: string[];          // fields copied into outbox routing, e.g. ["country_id", "airport_id"]
   mapFields?: string[];             // fields in the map shape
 }
 export function defineRegistry(types: EntityTypeDef[]): Registry;
