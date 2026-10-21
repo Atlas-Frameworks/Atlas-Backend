@@ -51,6 +51,7 @@ export class ViewLoader {
     const rows = await this.fetchAll(view);
     view.ids.clear();
     view.hashes.clear();
+    view.sortKeys.clear();
     for (const row of rows) {
       hold(view, row);
     }

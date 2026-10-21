@@ -125,7 +125,17 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
   let app: INestApplication<App>;
   let baseUrl: string;
   const db = {
-    query: vi.fn().mockResolvedValue([{ id: 'order-1', version: '2' }]),
+    query: vi
+      .fn()
+      .mockResolvedValue([
+        {
+          id: 'order-1',
+          version: '2',
+          name: 'n',
+          item_type: 'book',
+          item_price: '10.00',
+        },
+      ]),
     onModuleDestroy: vi.fn(),
   };
 
@@ -179,7 +189,7 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
     );
     expect(stream.res.headers['content-type']).toContain('text/event-stream');
     expect(stream.body).toContain(
-      `data: {"viewKey":"${viewKey}","seq":0,"total":1,"rows":[{"id":"order-1","version":2}]}`,
+      `data: {"viewKey":"${viewKey}","seq":0,"total":1,"rows":[{"id":"order-1","version":2,"name":"n","item_type":"book","item_price":"10.00"}]}`,
     );
 
     const next = new Promise<string>((resolve) => {
@@ -210,6 +220,8 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
           seq: 0,
           closesAt: expect.any(String),
           listeners: 0,
+          sortable: { name: 'text', item_type: 'text', item_price: 'number' },
+          defaultSort: 'name:asc',
           dependsOn: {
             orders: { fields: ['name', 'item_id', 'customer_id'] },
             items: {

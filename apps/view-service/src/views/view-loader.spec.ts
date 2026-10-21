@@ -35,6 +35,35 @@ describe('ViewLoader', () => {
     );
   });
 
+  it('keeps the sortable columns of every loaded row', async () => {
+    const db = {
+      query: vi.fn(async () => [
+        { id: 'a', version: '1', item_price: '25.50' },
+        { id: 'b', version: '1', item_price: '7.00' },
+      ]),
+    };
+    const loader = new ViewLoader(db as unknown as DbService);
+    const view = new View('key', 'orders', statement, {
+      item_price: 'number',
+    });
+
+    await loader.ensureLoaded(view);
+
+    expect(view.sortKeys.get('item_price', 'a')).toBe(25.5);
+    expect(view.sortKeys.get('item_price', 'b')).toBe(7);
+  });
+
+  it('fails the load when the query does not select a sortable column', async () => {
+    const db = { query: vi.fn(async () => [{ id: 'a', version: '1' }]) };
+    const loader = new ViewLoader(db as unknown as DbService);
+    const view = new View('key', 'orders', statement, { name: 'text' });
+
+    await expect(loader.ensureLoaded(view)).rejects.toThrow(
+      'sortable column name is not selected by the query',
+    );
+    expect(view.loaded).toBe(false);
+  });
+
   it('runs one query for callers that arrive while it loads', async () => {
     const { db, loader, view } = setup(async () => [{ id: 'a', version: '1' }]);
 

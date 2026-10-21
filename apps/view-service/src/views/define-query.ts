@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { parseSort, type SortSpec, type SortType } from './sort-keys.js';
 import type { Sql } from './sql.js';
 
 /**
@@ -16,6 +17,14 @@ export interface QueryDefinition<P> {
    * `entityType` itself is always watched, even when it is not listed.
    */
   dependsOn: Record<string, Dependency>;
+  /**
+   * Columns a client may sort by, and how they compare. The SQL must select
+   * them; their values are kept in memory for every id, so any sort and any
+   * range of rows needs no query.
+   */
+  sortable?: Record<string, SortType>;
+  /** The sort when the client asks for none: "name" or "item_price:desc". Without it, by id. */
+  defaultSort?: string;
   build(params: P): Sql;
 }
 
@@ -37,11 +46,18 @@ const names = new Set<string>();
 
 /**
  * Registers a query. Throws if the name is taken, so two queries never share
- * views, or if a related type has no link, so its changes can't be missed.
+ * views, if a related type has no link, so its changes can't be missed, or
+ * if the default sort is not a sortable column.
  */
 export function defineQuery<P>(def: QueryDefinition<P>): QueryDefinition<P> {
   if (names.has(def.name)) {
     throw new Error(`query ${def.name} is already defined`);
+  }
+  if (def.defaultSort !== undefined) {
+    const sort = parseSort(def.defaultSort, def.sortable ?? {});
+    if (typeof sort === 'string') {
+      throw new Error(`query ${def.name}: defaultSort: ${sort}`);
+    }
   }
   for (const [type, dep] of Object.entries(def.dependsOn)) {
     if (type !== def.entityType && dep.link === undefined) {
@@ -50,6 +66,20 @@ export function defineQuery<P>(def: QueryDefinition<P>): QueryDefinition<P> {
   }
   names.add(def.name);
   return def;
+}
+
+/** The query's default sort, or undefined to sort by id. */
+export function defaultSortOf(
+  def: QueryDefinition<unknown>,
+): SortSpec | undefined {
+  if (def.defaultSort === undefined) {
+    return undefined;
+  }
+  const sort = parseSort(def.defaultSort, def.sortable ?? {});
+  if (typeof sort === 'string') {
+    throw new Error(`query ${def.name}: defaultSort: ${sort}`);
+  }
+  return sort;
 }
 
 /**

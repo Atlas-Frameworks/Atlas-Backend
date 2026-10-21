@@ -1,4 +1,4 @@
-import { defineQuery, queryKey } from './define-query.js';
+import { defaultSortOf, defineQuery, queryKey } from './define-query.js';
 import { sql } from './sql.js';
 
 describe('defineQuery', () => {
@@ -36,6 +36,39 @@ describe('defineQuery', () => {
         build: () => sql`SELECT 1`,
       }),
     ).toThrow('query spec-no-link: dependency items needs a link');
+  });
+
+  it('refuses a default sort that is not a sortable column', () => {
+    expect(() =>
+      defineQuery({
+        name: 'spec-bad-sort',
+        entityType: 'orders',
+        dependsOn: {},
+        sortable: { name: 'text' },
+        defaultSort: 'item_price:desc',
+        build: () => sql`SELECT 1`,
+      }),
+    ).toThrow(
+      'query spec-bad-sort: defaultSort: cannot sort by item_price; sortable: name',
+    );
+  });
+
+  it('gives the default sort, or undefined to sort by id', () => {
+    const base = {
+      entityType: 'orders',
+      dependsOn: {},
+      sortable: { name: 'text' as const },
+      build: () => sql`SELECT 1`,
+    };
+
+    expect(
+      defaultSortOf(
+        defineQuery({ ...base, name: 'spec-sort', defaultSort: 'name:desc' }),
+      ),
+    ).toEqual({ column: 'name', dir: 'desc' });
+    expect(
+      defaultSortOf(defineQuery({ ...base, name: 'spec-no-sort' })),
+    ).toBeUndefined();
   });
 });
 

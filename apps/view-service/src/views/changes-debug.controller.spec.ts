@@ -16,7 +16,17 @@ describe('GET /changes', () => {
   beforeEach(async () => {
     reader = new FakeStreamReader();
     const db = {
-      query: vi.fn().mockResolvedValue([{ id: 'order-1', version: '1' }]),
+      query: vi
+        .fn()
+        .mockResolvedValue([
+          {
+            id: 'order-1',
+            version: '1',
+            name: 'n',
+            item_type: 'book',
+            item_price: '10.00',
+          },
+        ]),
       onModuleDestroy: vi.fn(),
     };
     const moduleRef = await Test.createTestingModule({

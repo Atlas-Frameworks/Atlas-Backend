@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { SortKeys } from './sort-keys.js';
 
 /** One row of a view's query: `id`, `version`, and the columns the developer selected. */
 export type Row = { id: string; version: number } & Record<string, unknown>;
@@ -12,6 +13,8 @@ export interface Membership {
   readonly ids: Map<string, number>;
   /** id → hash of the row last seen. A changed column, also one joined from a related entity, changes it. */
   readonly hashes: Map<string, number>;
+  /** The sortable columns' values of every id held. */
+  readonly sortKeys: SortKeys;
 }
 
 /** What changed in a view in one tick. Sent to clients as one `delta` event. */
@@ -41,10 +44,18 @@ export function hashRow(row: Row): number {
     .readUIntBE(0, 6);
 }
 
-/** Stores a row the view now holds. */
-export function hold(view: Membership, row: Row): void {
+/** Stores a row the view now holds, or a newer version of it. */
+export function hold(view: Membership, row: Row, hash = hashRow(row)): void {
   view.ids.set(row.id, row.version);
-  view.hashes.set(row.id, hashRow(row));
+  view.hashes.set(row.id, hash);
+  view.sortKeys.set(row);
+}
+
+/** Forgets an id the view no longer holds. */
+function drop(view: Membership, id: string): void {
+  view.ids.delete(id);
+  view.hashes.delete(id);
+  view.sortKeys.delete(id);
 }
 
 /** Removes deleted entities from the view. No query is needed. */
@@ -54,8 +65,8 @@ export function applyDeletes(
   diff: ViewDiff,
 ): void {
   for (const id of deleted) {
-    if (view.ids.delete(id)) {
-      view.hashes.delete(id);
+    if (view.ids.has(id)) {
+      drop(view, id);
       diff.removed.push(id);
     }
   }
@@ -117,8 +128,7 @@ function apply(
   const held = view.ids.get(id);
   if (!row) {
     if (held !== undefined) {
-      view.ids.delete(id);
-      view.hashes.delete(id);
+      drop(view, id);
       diff.removed.push(id);
     }
   } else if (held === undefined) {
@@ -128,8 +138,7 @@ function apply(
     // An older row than the one held is a lagging replica: keep what we have.
     const hash = hashRow(row);
     if (row.version > held || hash !== view.hashes.get(id)) {
-      view.ids.set(id, row.version);
-      view.hashes.set(id, hash);
+      hold(view, row, hash);
       diff.updated.push(row);
     }
   }

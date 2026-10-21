@@ -9,6 +9,7 @@ import {
 import { interval, map, merge, Observable } from 'rxjs';
 import type { Dependency } from './define-query.js';
 import { DependencyIndex } from './dependency-index.js';
+import type { SortType } from './sort-keys.js';
 import { toStatement } from './sql.js';
 import { ViewRegistry } from './view-registry.js';
 import { ViewService } from './view.service.js';
@@ -42,6 +43,10 @@ export class ViewsController {
             ? null
             : new Date(view.closesAt).toISOString(),
         listeners: view.listeners.size,
+        sortable: view.sortKeys.types,
+        defaultSort: view.defaultSort
+          ? `${view.defaultSort.column}:${view.defaultSort.dir}`
+          : null,
         dependsOn: describe(this.dependencies.dependenciesOf(view.viewKey)),
       })),
     };
@@ -102,6 +107,9 @@ export interface ViewsDebug {
     /** When the view closes because nobody streams it; null while streamed. */
     closesAt: string | null;
     listeners: number;
+    sortable: Readonly<Record<string, SortType>>;
+    /** "column:dir", or null when the view sorts by id. */
+    defaultSort: string | null;
     dependsOn: Record<string, DependencyDebug>;
   }[];
 }

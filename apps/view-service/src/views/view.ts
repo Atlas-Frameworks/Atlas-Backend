@@ -1,3 +1,4 @@
+import { SortKeys, type SortSpec, type SortType } from './sort-keys.js';
 import type { SqlStatement } from './sql.js';
 import type { Membership } from './view-diff.js';
 
@@ -26,6 +27,7 @@ export class View implements Membership {
   readonly ids = new Map<string, number>();
   /** id → hash of the row last seen, to notice a changed column. */
   readonly hashes = new Map<string, number>();
+  readonly sortKeys: SortKeys;
   readonly listeners = new Set<ViewListener>();
   /** Sequence number of the last message sent for this view. */
   seq = 0;
@@ -43,7 +45,12 @@ export class View implements Membership {
     readonly entityType: string,
     /** The full query: returns id, version and the columns sent to clients. */
     readonly statement: SqlStatement,
-  ) {}
+    sortable: Readonly<Record<string, SortType>> = {},
+    /** The sort when a client asks for none; undefined: by id. */
+    readonly defaultSort?: SortSpec,
+  ) {
+    this.sortKeys = new SortKeys(sortable);
+  }
 
   nextSeq(): number {
     this.seq += 1;

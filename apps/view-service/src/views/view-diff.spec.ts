@@ -9,6 +9,7 @@ import {
   type Membership,
   type Row,
 } from './view-diff.js';
+import { SortKeys } from './sort-keys.js';
 
 const row = (id: string, version: number, price = 10): Row => ({
   id,
@@ -22,6 +23,7 @@ function held(): Membership {
   const view = {
     ids: new Map<string, number>(),
     hashes: new Map<string, number>(),
+    sortKeys: new SortKeys({ item_price: 'number' }),
   };
   hold(view, row('a', 1));
   hold(view, row('b', 1));
@@ -109,6 +111,27 @@ describe('view diff', () => {
     expect(diff.removed).toEqual(['a']);
     expect([...view.ids.keys()]).toEqual(['b']);
     expect([...view.hashes.keys()]).toEqual(['b']);
+    expect(view.sortKeys.get('item_price', 'a')).toBeUndefined();
+  });
+
+  it('keeps the sort values of added and updated rows, and forgets removed ones', () => {
+    const view = held();
+    const diff = emptyDiff();
+
+    applyRecheck(
+      view,
+      new Map([
+        ['a', 0],
+        ['b', 0],
+        ['c', 0],
+      ]),
+      [row('a', 1, 25), row('c', 1, 7)],
+      diff,
+    );
+
+    expect(view.sortKeys.get('item_price', 'a')).toBe(25);
+    expect(view.sortKeys.get('item_price', 'b')).toBeUndefined();
+    expect(view.sortKeys.get('item_price', 'c')).toBe(7);
   });
 
   it('diffs a full run against the ids held', () => {

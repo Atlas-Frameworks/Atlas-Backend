@@ -16,8 +16,20 @@ describe('example OrdersController', () => {
   beforeEach(async () => {
     db.query.mockReset();
     db.query.mockResolvedValue([
-      { id: 'order-1', version: '2' },
-      { id: 'order-2', version: '1' },
+      {
+        id: 'order-1',
+        version: '2',
+        name: 'n',
+        item_type: 'book',
+        item_price: '10.00',
+      },
+      {
+        id: 'order-2',
+        version: '1',
+        name: 'n',
+        item_type: 'book',
+        item_price: '10.00',
+      },
     ]);
     const moduleRef = await Test.createTestingModule({
       imports: [ExampleModule],
@@ -56,8 +68,20 @@ describe('example OrdersController', () => {
       seq: 0,
       total: 2,
       rows: [
-        { id: 'order-1', version: 2 },
-        { id: 'order-2', version: 1 },
+        {
+          id: 'order-1',
+          version: 2,
+          name: 'n',
+          item_type: 'book',
+          item_price: '10.00',
+        },
+        {
+          id: 'order-2',
+          version: 1,
+          name: 'n',
+          item_type: 'book',
+          item_price: '10.00',
+        },
       ],
     });
     expect(lastSql().text).toMatch(

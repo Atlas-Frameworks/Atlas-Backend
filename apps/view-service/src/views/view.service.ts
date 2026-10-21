@@ -5,7 +5,11 @@ import {
   type OnModuleDestroy,
 } from '@nestjs/common';
 import { ChangeFeed } from '../changes/change-feed.js';
-import { queryKey, type QueryDefinition } from './define-query.js';
+import {
+  defaultSortOf,
+  queryKey,
+  type QueryDefinition,
+} from './define-query.js';
 import { DependencyIndex } from './dependency-index.js';
 import { toStatement } from './sql.js';
 import { ViewLoader } from './view-loader.js';
@@ -54,6 +58,8 @@ export class ViewService implements OnModuleDestroy {
       queryKey(query.name, params),
       query.entityType,
       toStatement(query.build(params)),
+      query.sortable,
+      defaultSortOf(query),
     );
     this.cancelClose(view);
     this.dependencies.add(view.viewKey, query.entityType, query.dependsOn);

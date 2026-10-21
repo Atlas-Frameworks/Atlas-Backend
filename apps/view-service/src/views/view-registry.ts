@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { SortSpec, SortType } from './sort-keys.js';
 import type { SqlStatement } from './sql.js';
 import { View } from './view.js';
 
@@ -9,12 +10,19 @@ export class ViewRegistry {
 
   /**
    * Returns the view with this key, or creates it.
-   * The caller decides the key; the statement is used only for a new view.
+   * The caller decides the key; the statement and sorting are used only for
+   * a new view.
    */
-  open(key: string, entityType: string, statement: SqlStatement): View {
+  open(
+    key: string,
+    entityType: string,
+    statement: SqlStatement,
+    sortable?: Readonly<Record<string, SortType>>,
+    defaultSort?: SortSpec,
+  ): View {
     let view = this.views.get(key);
     if (!view) {
-      view = new View(key, entityType, statement);
+      view = new View(key, entityType, statement, sortable, defaultSort);
       this.views.set(key, view);
     }
     return view;

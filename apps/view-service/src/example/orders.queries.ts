@@ -19,6 +19,12 @@ const orderColumns = sql`
   o.id, o.version, o.name, o.customer_id, o.item_id,
   i.type AS item_type, i.price AS item_price`;
 
+/** Both queries sort by name unless the client asks for another column. */
+const orderSorting = {
+  sortable: { name: 'text', item_type: 'text', item_price: 'number' },
+  defaultSort: 'name',
+} as const;
+
 export interface OrdersSearchParams {
   types?: string[];
   minPrice?: number;
@@ -31,6 +37,7 @@ export const ordersSearch = defineQuery({
   name: 'orders-search',
   entityType: 'orders',
   dependsOn: ordersDependsOn,
+  ...orderSorting,
   build: (p: OrdersSearchParams) => {
     const where: Sql[] = [];
     if (p.types !== undefined) {
@@ -63,6 +70,7 @@ export const customerOrders = defineQuery({
   name: 'customer-orders',
   entityType: 'orders',
   dependsOn: ordersDependsOn,
+  ...orderSorting,
   build: (p: CustomerOrdersParams) => sql`
     SELECT ${orderColumns}
     FROM orders o
