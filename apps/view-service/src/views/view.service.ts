@@ -14,6 +14,8 @@ import { DependencyIndex } from './dependency-index.js';
 import { toStatement } from './sql.js';
 import { ViewLoader } from './view-loader.js';
 import { ViewRegistry } from './view-registry.js';
+import type { SortSpec } from './sort-keys.js';
+import { sortName } from './sorted-index.js';
 import type { Row } from './view-diff.js';
 import type { View, ViewEvent, ViewListener } from './view.js';
 
@@ -23,10 +25,24 @@ import type { View, ViewEvent, ViewListener } from './view.js';
  */
 export const CLOSE_AFTER_MS = 60_000;
 
-/** What a route returns after opening a view, and the first event of its stream. */
-export interface ViewSnapshot {
+/** Which rows to read: a sort, and a range of it. Every part is optional. */
+export interface PageRequest {
+  /** Default: the view's default sort, or by id. */
+  sort?: SortSpec;
+  /** Position of the first row, from 0. Default 0. */
+  offset?: number;
+  /** Default: every row from `offset` on. */
+  limit?: number;
+}
+
+/** A range of a view's rows in one sort: what a route returns, and the first event of a stream. */
+export interface ViewPage {
   viewKey: string;
   seq: number;
+  /** "column:dir", or "id". */
+  sort: string;
+  offset: number;
+  /** Rows in the whole view, not only in this page. */
   total: number;
   rows: Row[];
 }
@@ -53,7 +69,11 @@ export class ViewService implements OnModuleDestroy {
    * the load, so every change from that point on is read. The view closes
    * CLOSE_AFTER_MS after this unless a client starts streaming it.
    */
-  async open<P>(query: QueryDefinition<P>, params: P): Promise<ViewSnapshot> {
+  async open<P>(
+    query: QueryDefinition<P>,
+    params: P,
+    page: PageRequest = {},
+  ): Promise<ViewPage> {
     const view = this.registry.open(
       queryKey(query.name, params),
       query.entityType,
@@ -68,7 +88,7 @@ export class ViewService implements OnModuleDestroy {
         Object.keys(this.dependencies.dependenciesOf(view.viewKey)!),
       );
       await this.loader.ensureLoaded(view);
-      return await this.snapshot(view);
+      return await this.page(view, page);
     } catch (err) {
       this.logger.error(`opening view ${view.viewKey} failed`, err);
       throw new ServiceUnavailableException({
@@ -118,16 +138,46 @@ export class ViewService implements OnModuleDestroy {
   }
 
   /**
-   * The view's rows at its current seq. The ids and seq are taken at the
-   * call; the rows are then read by id. A row may already be newer than seq,
-   * or gone: the deltas after seq bring the client to the same state.
+   * A range of the view's rows at its current seq. Which ids, and their
+   * order, come from memory at the call, with no query; then only those
+   * rows are read by id. A row may already be newer than seq, or gone: the
+   * deltas after seq bring the client to the same state.
    */
-  snapshot(view: View): Promise<ViewSnapshot> {
-    const { viewKey, seq } = view;
-    const total = view.ids.size;
+  page(view: View, request: PageRequest): Promise<ViewPage> {
+    const spec = request.sort ?? view.defaultSort;
+    const sorted = view.sorted(spec).ids;
+    const offset = request.offset ?? 0;
+    const ids = sorted.slice(
+      offset,
+      request.limit === undefined ? undefined : offset + request.limit,
+    );
+    const page = {
+      viewKey: view.viewKey,
+      seq: view.seq,
+      sort: sortName(spec),
+      offset,
+      total: sorted.length,
+    };
     return this.loader
-      .fetchByIds(view, [...view.ids.keys()])
-      .then((rows) => ({ viewKey, seq, total, rows }));
+      .fetchByIds(view, ids)
+      .then((rows) => ({ ...page, rows: inOrder(rows, ids) }));
+  }
+
+  /**
+   * A page of an open view, for a client that already has its viewKey. Like
+   * opening it again, this restarts its close timer if nobody streams it.
+   */
+  async read(view: View, request: PageRequest): Promise<ViewPage> {
+    this.closeWhenIdle(view);
+    try {
+      return await this.page(view, request);
+    } catch (err) {
+      this.logger.error(`reading view ${view.viewKey} failed`, err);
+      throw new ServiceUnavailableException({
+        code: 'RETRY',
+        message: 'could not read the rows, try again',
+      });
+    }
   }
 
   /** Sends an event to everyone streaming the view, numbered with the next seq. */
@@ -156,4 +206,10 @@ export class ViewService implements OnModuleDestroy {
     view.closeTimer = undefined;
     view.closesAt = undefined;
   }
+}
+
+/** The rows in the order of `ids`; ids whose row wasn't returned are left out. */
+function inOrder(rows: Row[], ids: readonly string[]): Row[] {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return ids.flatMap((id) => byId.get(id) ?? []);
 }

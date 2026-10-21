@@ -73,6 +73,8 @@ describe('ViewsController (observable)', () => {
         data: {
           viewKey: 'key',
           seq: 0,
+          sort: 'id',
+          offset: 0,
           total: 1,
           rows: [{ id: 'a', version: 1, name: 'x' }],
         },
@@ -187,7 +189,7 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
     );
     expect(stream.res.headers['content-type']).toContain('text/event-stream');
     expect(stream.body).toContain(
-      `data: {"viewKey":"${viewKey}","seq":0,"total":1,"rows":[{"id":"order-1","version":2,"name":"n","item_type":"book","item_price":"10.00"}]}`,
+      `data: {"viewKey":"${viewKey}","seq":0,"sort":"name:asc","offset":0,"total":1,"rows":[{"id":"order-1","version":2,"name":"n","item_type":"book","item_price":"10.00"}]}`,
     );
 
     const next = new Promise<string>((resolve) => {
@@ -220,7 +222,8 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
           listeners: 0,
           sortable: { name: 'text', item_type: 'text', item_price: 'number' },
           defaultSort: 'name:asc',
-          sorts: [],
+          // Built by the page the route returned.
+          sorts: ['name:asc'],
           dependsOn: {
             orders: { fields: ['name', 'item_id', 'customer_id'] },
             items: {
@@ -283,6 +286,29 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
       { id: 'c', value: 25 },
     ]);
     expect(db.query.mock.calls.length).toBe(queries);
+  });
+
+  it('returns a page of a view that is already open, by its viewKey', async () => {
+    const opened = await request(app.getHttpServer())
+      .get('/orders?type=book')
+      .expect(200);
+
+    const res = await request(app.getHttpServer())
+      .get(`/views/${opened.body.viewKey}/rows?sort=item_price:desc&limit=5`)
+      .expect(200);
+
+    expect(res.body).toEqual({
+      viewKey: opened.body.viewKey,
+      seq: 0,
+      sort: 'item_price:desc',
+      offset: 0,
+      total: 1,
+      rows: [expect.objectContaining({ id: 'order-1' })],
+    });
+    await request(app.getHttpServer())
+      .get(`/views/${opened.body.viewKey}/rows?limit=0`)
+      .expect(400);
+    await request(app.getHttpServer()).get('/views/nope/rows').expect(404);
   });
 
   it('returns 400 INVALID_PARAM for a column that is not sortable', async () => {

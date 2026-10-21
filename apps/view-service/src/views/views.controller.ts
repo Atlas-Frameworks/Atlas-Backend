@@ -10,12 +10,12 @@ import {
 import { interval, map, merge, Observable } from 'rxjs';
 import type { Dependency } from './define-query.js';
 import { DependencyIndex } from './dependency-index.js';
-import { optionalSort } from '../http/query-params.js';
+import { optionalSort, pageRequest } from '../http/query-params.js';
 import type { SortType, SortValue } from './sort-keys.js';
 import { sortName } from './sorted-index.js';
 import { toStatement } from './sql.js';
 import { ViewRegistry } from './view-registry.js';
-import { ViewService } from './view.service.js';
+import { ViewService, type ViewPage } from './view.service.js';
 import type { View, ViewEvent, ViewListener } from './view.js';
 
 /** A comment line every 15 s keeps idle proxies from closing the stream. */
@@ -71,7 +71,7 @@ export class ViewsController {
         send: (event) =>
           waiting ? waiting.push(event) : subscriber.next(toMessage(event)),
       };
-      const snapshot = this.views.snapshot(view);
+      const snapshot = this.views.page(view, {});
       this.views.addListener(view, listener);
       snapshot.then(
         (data) => {
@@ -89,6 +89,20 @@ export class ViewsController {
       map((): MessageEvent => ({ comment: 'ping' })),
     );
     return merge(events, heartbeat);
+  }
+
+  /**
+   * GET /views/:viewKey/rows?sort=item_price:desc&offset=7&limit=20 — a page
+   * of a view a client already opened, e.g. a second list in the client on
+   * the same data. Every param is optional; no limit: every row.
+   */
+  @Get(':viewKey/rows')
+  rows(
+    @Param('viewKey') key: string,
+    @Query() query: Record<string, unknown>,
+  ): Promise<ViewPage> {
+    const view = this.loadedView(key);
+    return this.views.read(view, pageRequest(view.sortKeys.types, query));
   }
 
   /**

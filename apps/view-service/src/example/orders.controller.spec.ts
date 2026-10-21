@@ -66,6 +66,8 @@ describe('example OrdersController', () => {
     expect(res.body).toEqual({
       viewKey: expect.stringMatching(/^[0-9a-f]{32}$/),
       seq: 0,
+      sort: 'name:asc',
+      offset: 0,
       total: 2,
       rows: [
         {
@@ -165,6 +167,75 @@ describe('example OrdersController', () => {
     );
     expect(rows.values).toEqual([['book'], ['order-1', 'order-2']]);
   });
+
+  it('returns any page of rows, all from one view loaded once', async () => {
+    db.query.mockImplementation((stmt: Stmt) =>
+      Promise.resolve(
+        [
+          { id: 'o-a', name: 'A' },
+          { id: 'o-b', name: 'B' },
+          { id: 'o-c', name: 'C' },
+          { id: 'o-d', name: 'D' },
+        ]
+          .filter(
+            (row) =>
+              !isRowFetch(stmt) ||
+              (stmt.values.at(-1) as string[]).includes(row.id),
+          )
+          .map((row) => ({
+            ...row,
+            version: '1',
+            item_type: 'book',
+            item_price: '1.00',
+          })),
+      ),
+    );
+    const server = app.getHttpServer();
+    const names = (res: request.Response) =>
+      (res.body as { rows: { name: string }[] }).rows.map((r) => r.name);
+
+    const first = await request(server).get('/orders?type=book&limit=2');
+    const middle = await request(server).get(
+      '/orders?type=book&offset=1&limit=2',
+    );
+    const all = await request(server).get('/orders?type=book&sort=name:desc');
+
+    expect(names(first)).toEqual(['A', 'B']);
+    expect(names(middle)).toEqual(['B', 'C']);
+    expect(middle.body).toMatchObject({ offset: 1, total: 4 });
+    expect(names(all)).toEqual(['D', 'C', 'B', 'A']);
+    expect(new Set([first, middle, all].map((r) => r.body.viewKey)).size).toBe(
+      1,
+    );
+    const calls = db.query.mock.calls.map(([stmt]) => stmt as Stmt);
+    expect(calls.filter((stmt) => !isRowFetch(stmt))).toHaveLength(1);
+    expect(calls.filter(isRowFetch).map((stmt) => stmt.values.at(-1))).toEqual([
+      ['o-a', 'o-b'],
+      ['o-b', 'o-c'],
+      ['o-d', 'o-c', 'o-b', 'o-a'],
+    ]);
+  });
+
+  it.each([
+    [
+      'sort=customer_id',
+      'cannot sort by customer_id; sortable: name, item_type, item_price',
+    ],
+    ['sort=name:up', 'sort must be <column> or <column>:asc|desc, got name:up'],
+    ['offset=-1', 'offset must be a whole number of at least 0'],
+    ['limit=0', 'limit must be a whole number of at least 1'],
+    ['limit=2.5', 'limit must be a whole number of at least 1'],
+  ])(
+    'returns 400 INVALID_PARAM for %s, without querying',
+    async (param, message) => {
+      const res = await request(app.getHttpServer())
+        .get(`/orders?type=book&${param}`)
+        .expect(400);
+
+      expect(res.body).toEqual({ code: 'INVALID_PARAM', message });
+      expect(db.query).not.toHaveBeenCalled();
+    },
+  );
 
   it('returns 503 RETRY when Postgres fails', async () => {
     db.query.mockRejectedValueOnce(new Error('connection refused'));

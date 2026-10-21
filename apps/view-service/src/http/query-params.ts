@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { parseSort, type SortSpec, type SortType } from '../views/sort-keys.js';
+import type { PageRequest } from '../views/view.service.js';
 
 // Turns raw HTTP query-string values into typed, optional params for views.
 // Missing or empty ("?minPrice=") means "not set" and returns undefined.
@@ -34,6 +35,33 @@ export function optionalUuid(name: string, raw: unknown): string | undefined {
     invalid(`${name} must be a uuid`);
   }
   return raw.toLowerCase();
+}
+
+export function optionalInteger(
+  name: string,
+  raw: unknown,
+  min: number,
+): number | undefined {
+  const n = optionalNumber(name, raw);
+  if (n !== undefined && (!Number.isInteger(n) || n < min)) {
+    invalid(`${name} must be a whole number of at least ${min}`);
+  }
+  return n;
+}
+
+/**
+ * ?sort=item_price:desc&offset=7&limit=20 — which rows of a view to return.
+ * Every part is optional; without limit, every row from offset on.
+ */
+export function pageRequest(
+  sortable: Readonly<Record<string, SortType>> | undefined,
+  query: { sort?: unknown; offset?: unknown; limit?: unknown },
+): PageRequest {
+  return {
+    sort: optionalSort('sort', query.sort, sortable ?? {}),
+    offset: optionalInteger('offset', query.offset, 0),
+    limit: optionalInteger('limit', query.limit, 1),
+  };
 }
 
 /** "?sort=item_price:desc" → a sort on one of the view's sortable columns. */

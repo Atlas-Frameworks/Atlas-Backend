@@ -28,17 +28,19 @@ function setup() {
 }
 
 describe('ViewService', () => {
-  it('takes a snapshot of the rows of the ids held, at the current seq', async () => {
+  it('reads every row held at the current seq, by id by default', async () => {
     const { service, view, loader } = setup();
     view.nextSeq();
 
-    const snapshot = service.snapshot(view);
+    const page = service.page(view, {});
     view.nextSeq();
-    view.ids.set('c', 1);
+    hold(view, { id: 'c', version: 1 });
 
-    expect(await snapshot).toEqual({
+    expect(await page).toEqual({
       viewKey: 'key',
       seq: 1,
+      sort: 'id',
+      offset: 0,
       total: 2,
       rows: [
         { id: 'a', version: 9, name: 'a' },
@@ -46,6 +48,105 @@ describe('ViewService', () => {
       ],
     });
     expect(loader.fetchByIds).toHaveBeenCalledWith(view, ['a', 'b']);
+  });
+
+  describe('pages', () => {
+    /** A view of 5 orders sorted by price: e 10, d 20, c 30, b 40, a 50. */
+    function sorted() {
+      const registry = new ViewRegistry();
+      const loader = {
+        // Like Postgres: rows in any order, and only the ids that still match.
+        fetchByIds: vi.fn((_view: View, ids: string[]) =>
+          Promise.resolve(
+            ids
+              .filter((id) => id !== 'gone')
+              .reverse()
+              .map((id) => ({ id, version: 1 })),
+          ),
+        ),
+      };
+      const service = new ViewService(
+        registry,
+        loader as unknown as ViewLoader,
+        new DependencyIndex(),
+        {} as ChangeFeed,
+      );
+      const view = registry.open(
+        'key',
+        'orders',
+        { text: 'SELECT', values: [] },
+        { price: 'number' },
+        { column: 'price', dir: 'asc' },
+      );
+      for (const [id, price] of [
+        ['a', 50],
+        ['b', 40],
+        ['c', 30],
+        ['d', 20],
+        ['e', 10],
+      ] as const) {
+        hold(view, { id, version: 1, price });
+      }
+      const ids = (page: { rows: { id: string }[] }) =>
+        page.rows.map((r) => r.id);
+      return { service, view, loader, ids };
+    }
+
+    it('cuts any range from the sort in memory, and reads only its rows', async () => {
+      const { service, view, loader, ids } = sorted();
+
+      const page = await service.page(view, { offset: 1, limit: 3 });
+
+      expect(page).toMatchObject({ sort: 'price:asc', offset: 1, total: 5 });
+      expect(ids(page)).toEqual(['d', 'c', 'b']);
+      expect(loader.fetchByIds).toHaveBeenLastCalledWith(view, ['d', 'c', 'b']);
+      expect(ids(await service.page(view, { offset: 3, limit: 3 }))).toEqual([
+        'b',
+        'a',
+      ]);
+    });
+
+    it('reads every row from offset on without a limit, in any sort', async () => {
+      const { service, view, ids } = sorted();
+
+      const page = await service.page(view, {
+        sort: { column: 'price', dir: 'desc' },
+        offset: 2,
+      });
+
+      expect(page).toMatchObject({ sort: 'price:desc', total: 5 });
+      expect(ids(page)).toEqual(['c', 'd', 'e']);
+    });
+
+    it('returns no rows, without a query, past the end', async () => {
+      const { service, view, loader } = sorted();
+
+      const page = await service.page(view, { offset: 9, limit: 3 });
+
+      expect(page).toMatchObject({ offset: 9, total: 5, rows: [] });
+      expect(loader.fetchByIds).toHaveBeenCalledWith(view, []);
+    });
+
+    it('leaves out a row that no longer matches when read', async () => {
+      const { service, view, ids } = sorted();
+      hold(view, { id: 'gone', version: 1, price: 15 });
+
+      const page = await service.page(view, { limit: 3 });
+
+      expect(page.total).toBe(6);
+      expect(ids(page)).toEqual(['e', 'd']);
+    });
+
+    it('answers a read of an open view with 503 RETRY when the rows cannot be read', async () => {
+      const { service, view, loader } = sorted();
+      vi.spyOn(service['logger'], 'error').mockImplementation(() => undefined);
+      loader.fetchByIds.mockRejectedValueOnce(new Error('connection lost'));
+
+      await expect(service.read(view, {})).rejects.toMatchObject({
+        response: { code: 'RETRY' },
+      });
+      clearTimeout(view.closeTimer);
+    });
   });
 
   it('sends each published event to every listener with the next seq', () => {
