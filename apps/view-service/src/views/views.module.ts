@@ -1,12 +1,12 @@
 import { Module } from '@nestjs/common';
-import { EntitiesModule } from '../entities/entities.module.js';
+import { DbModule } from '../db/db.module.js';
+import { ViewLoader } from './view-loader.js';
 import { ViewRegistry } from './view-registry.js';
-import { ViewsController } from './views.controller.js';
+import { ViewService } from './view.service.js';
 
 @Module({
-  imports: [EntitiesModule],
-  controllers: [ViewsController],
-  providers: [ViewRegistry],
-  exports: [ViewRegistry],
+  imports: [DbModule],
+  providers: [ViewRegistry, ViewLoader, ViewService],
+  exports: [ViewRegistry, ViewService],
 })
 export class ViewsModule {}

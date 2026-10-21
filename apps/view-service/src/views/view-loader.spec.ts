@@ -1,0 +1,63 @@
+import type { DbService } from '../db/db.service.js';
+import { View } from './view.js';
+import { ViewLoader } from './view-loader.js';
+
+const statement = {
+  text: 'SELECT o.id, o.version FROM orders o WHERE o.name = $1',
+  values: ['x'],
+};
+
+function setup(query: () => Promise<{ id: string; version: string }[]>) {
+  const db = { query: vi.fn(query) };
+  const loader = new ViewLoader(db as unknown as DbService);
+  return { db, loader, view: new View('key', 'orders', statement) };
+}
+
+describe('ViewLoader', () => {
+  it("fills the view with ids and versions from the view's statement", async () => {
+    const { db, loader, view } = setup(async () => [
+      { id: 'a', version: '3' },
+      { id: 'b', version: '1' },
+    ]);
+
+    await loader.ensureLoaded(view);
+
+    expect(db.query).toHaveBeenCalledWith(statement);
+    expect([...view.ids]).toEqual([
+      ['a', 3],
+      ['b', 1],
+    ]);
+  });
+
+  it('runs one query for callers that arrive while it loads', async () => {
+    const { db, loader, view } = setup(async () => [{ id: 'a', version: '1' }]);
+
+    await Promise.all([
+      loader.ensureLoaded(view),
+      loader.ensureLoaded(view),
+      loader.ensureLoaded(view),
+    ]);
+    await loader.ensureLoaded(view);
+
+    expect(db.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('tries again after a failed load', async () => {
+    let calls = 0;
+    const { db, loader, view } = setup(async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw new Error('connection refused');
+      }
+      return [{ id: 'a', version: '1' }];
+    });
+
+    await expect(loader.ensureLoaded(view)).rejects.toThrow(
+      'connection refused',
+    );
+    await loader.ensureLoaded(view);
+
+    expect(db.query).toHaveBeenCalledTimes(2);
+    expect(view.ids.has('a')).toBe(true);
+  });
+});
