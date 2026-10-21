@@ -1,8 +1,15 @@
 import type { SqlStatement } from './sql.js';
 
-/** One open stream to a client (an SSE response in step 4). */
+/** A message for everyone streaming a view. `seq` grows by one per event. */
+export interface ViewEvent {
+  type: string;
+  seq: number;
+  data: unknown;
+}
+
+/** One open stream to a client (an SSE response). */
 export interface ViewListener {
-  send(message: unknown): void;
+  send(event: ViewEvent): void;
 }
 
 /**
@@ -22,6 +29,8 @@ export class View {
   refCount = 0;
   /** The first load from Postgres; shared by everyone who opens the view meanwhile. */
   loading: Promise<void> | undefined;
+  /** True once `ids` holds the result of the full query. */
+  loaded = false;
 
   constructor(
     readonly viewKey: string,

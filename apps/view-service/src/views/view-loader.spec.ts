@@ -23,6 +23,7 @@ describe('ViewLoader', () => {
     await loader.ensureLoaded(view);
 
     expect(db.query).toHaveBeenCalledWith(statement);
+    expect(view.loaded).toBe(true);
     expect([...view.ids]).toEqual([
       ['a', 3],
       ['b', 1],
@@ -55,6 +56,7 @@ describe('ViewLoader', () => {
     await expect(loader.ensureLoaded(view)).rejects.toThrow(
       'connection refused',
     );
+    expect(view.loaded).toBe(false);
     await loader.ensureLoaded(view);
 
     expect(db.query).toHaveBeenCalledTimes(2);

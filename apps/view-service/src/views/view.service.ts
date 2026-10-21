@@ -7,6 +7,7 @@ import { queryKey, type QueryDefinition } from './define-query.js';
 import { toStatement } from './sql.js';
 import { ViewLoader } from './view-loader.js';
 import { ViewRegistry } from './view-registry.js';
+import type { View, ViewEvent } from './view.js';
 
 /** What a route returns after opening a view. */
 export interface ViewSnapshot {
@@ -46,11 +47,25 @@ export class ViewService {
         message: 'could not load the view, try again',
       });
     }
+    return this.snapshot(view);
+  }
+
+  /** The view's current ids, at its current seq. */
+  snapshot(view: View): ViewSnapshot {
     return {
       viewKey: view.viewKey,
       seq: view.seq,
       total: view.ids.size,
       ids: [...view.ids.keys()],
     };
+  }
+
+  /** Sends an event to everyone streaming the view, numbered with the next seq. */
+  publish(view: View, type: string, data: unknown): ViewEvent {
+    const event: ViewEvent = { type, seq: view.nextSeq(), data };
+    for (const listener of view.listeners) {
+      listener.send(event);
+    }
+    return event;
   }
 }

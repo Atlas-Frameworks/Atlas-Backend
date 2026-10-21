@@ -27,5 +27,6 @@ export class ViewLoader {
     for (const row of rows) {
       view.ids.set(row.id, Number(row.version));
     }
+    view.loaded = true;
   }
 }
