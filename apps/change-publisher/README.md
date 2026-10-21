@@ -24,6 +24,7 @@ publisher or Redis deployment without changing the trigger flow.
 | --- | --- | --- |
 | `DATABASE_URL` | `postgresql://atlas_publisher:atlas_publisher@localhost:5432/atlas` | Primary PostgreSQL connection |
 | `REDIS_URL` | `redis://localhost:6380` | Stable Redis master endpoint |
+| `PUBLISHER_SCHEMA` | `benchmark_publisher` | Source schema; other values are rejected |
 | `PUBLISHER_ID` | Generated per process | Lease owner identity |
 | `PUBLISHER_BATCH_SIZE` | `1000` | Events claimed per entity and batch |
 | `PUBLISHER_LEASE_SECONDS` | `30` | Entity publisher lease duration |
@@ -34,3 +35,134 @@ Run locally after `postgres:setup` and `postgres:seed`:
 ```bash
 npm run publisher:start
 ```
+
+## PostgreSQL schema contract
+
+The Publisher environment keeps application data in a dedicated schema. In
+this repository that schema is `benchmark_publisher`; no commerce entity table
+is required under `public`.
+
+Every synchronized entity table must have:
+
+- an `id uuid` column;
+- a primary key or another application-enforced uniqueness rule for `id`;
+- its business columns;
+- `version bigint NOT NULL DEFAULT 1`;
+- `updated_at timestamptz NOT NULL DEFAULT now()`.
+
+For example:
+
+```sql
+CREATE TABLE benchmark_publisher.items (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  price      numeric(12, 2) NOT NULL CHECK (price >= 0),
+  type       text NOT NULL,
+  version    bigint NOT NULL DEFAULT 1,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+```
+
+The shared Publisher infrastructure is installed in `public` by
+`infra/postgres/init/03-outbox.sql` and
+`infra/postgres/init/04-commerce-sync.sql`:
+
+| Object | Responsibility |
+| --- | --- |
+| `synchronized_entity_types` | Registry, independent sequence state and publisher lease for every entity type |
+| `build_entity_changes(old, new)` | Builds the business-field diff and excludes `id`, `version`, and `updated_at` |
+| `manage_entity_version()` | Sets version `1` on insert and increments it on every update |
+| `sync_entity_change()` | Appends the raw event to the entity-specific durable outbox in the business transaction |
+| `register_synced_table()` | Creates the outbox, grants permissions, registers the type and attaches both triggers |
+| `claim_sync_events()` | Claims a batch under a lease and assigns `typeSeq` values after commit |
+| `mark_sync_events_published()` | Deletes rows only after Redis accepted the batch |
+
+Register each table once after creating it:
+
+```sql
+SELECT public.register_synced_table(
+  'benchmark_publisher.items'::regclass,
+  'items'
+);
+```
+
+Registration creates `benchmark_publisher.items_outbox` with this logical
+shape:
+
+```sql
+event_id       bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+aggregate_id   text NOT NULL,
+payload        jsonb NOT NULL,
+event_sequence bigint UNIQUE,
+published_at   timestamptz,
+created_at     timestamptz NOT NULL DEFAULT clock_timestamp()
+```
+
+It also creates these triggers on the source table:
+
+```text
+atlas_manage_version  BEFORE INSERT OR UPDATE  -> public.manage_entity_version()
+atlas_sync_change     AFTER INSERT OR UPDATE OR DELETE -> public.sync_entity_change(...)
+```
+
+Do not allocate `typeSeq` in the entity transaction for this pipeline. The
+outbox trigger writes the payload without `typeSeq`; `claim_sync_events()` adds
+it when the Publisher claims a committed batch. A separate outbox and publish
+loop per entity type prevents one busy entity type from blocking the others.
+
+The `atlas_writer` role needs write access to source tables and insert access
+to their outboxes. `atlas_publisher` needs only the granted registry reads and
+execution rights on the claim/acknowledgement functions; it does not need to
+write application tables directly.
+
+The repository's complete setup and registration examples are in:
+
+- `infra/postgres/init/03-outbox.sql`
+- `infra/postgres/init/04-commerce-sync.sql`
+- `infra/postgres/init/05-register-commerce.sql`
+
+## Redis event format
+
+For an entity type named `items`, the Publisher executes the equivalent of:
+
+```text
+XADD changes:items * value <JSON payload>
+```
+
+An update is stored in the `value` field as JSON:
+
+```json
+{
+  "schema": 2,
+  "type": "items",
+  "id": "7f1c2a9e-36e7-4f83-a50c-d21497d7628a",
+  "op": "upsert",
+  "version": 42,
+  "typeSeq": 918273,
+  "committedAt": "2026-10-20T10:15:03.123Z",
+  "changes": {
+    "old": { "price": 50.25 },
+    "new": { "price": 72.9 }
+  }
+}
+```
+
+An insert is also an `upsert`: `changes.old` is empty and `changes.new`
+contains every business field. A no-op update contains two empty objects. A
+delete has no `changes` member:
+
+```json
+{
+  "schema": 2,
+  "type": "items",
+  "id": "7f1c2a9e-36e7-4f83-a50c-d21497d7628a",
+  "op": "delete",
+  "version": 42,
+  "typeSeq": 918274,
+  "committedAt": "2026-10-20T10:16:11.456Z"
+}
+```
+
+The authoritative payload schema is
+`packages/protocol/schema/outbox-event.v2.json`. Delivery is at least once, so
+consumers must use `version` and `typeSeq` to reject duplicates and detect
+gaps.

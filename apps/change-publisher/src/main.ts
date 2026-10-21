@@ -4,7 +4,10 @@ import { PostgresEventRepository } from './postgres-event-repository.js';
 import { RedisEventPublisher } from './redis-event-publisher.js';
 
 const config = readPublisherConfig(process.env);
-const repository = new PostgresEventRepository(config.databaseUrl);
+const repository = new PostgresEventRepository({
+  connectionString: config.databaseUrl,
+  sourceSchema: config.sourceSchema,
+});
 const publisher = new RedisEventPublisher(config.redisUrl);
 const abortController = new AbortController();
 
@@ -17,6 +20,7 @@ try {
     throw new Error('No synchronized entity types are registered');
   }
 
+  console.log(`Publisher source schema: ${config.sourceSchema}`);
   console.log(`Starting independent publish loops for: ${entityTypes.join(', ')}`);
   await Promise.all(
     entityTypes.map((entityType) =>

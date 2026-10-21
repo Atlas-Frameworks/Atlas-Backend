@@ -1,24 +1,30 @@
 # Change relay benchmark
 
 This benchmark compares the two relay architectures without changing commerce
-data. Both pipelines use the same four entity types, 1,000 seed rows per type,
-the same update statements, and separate Redis Streams.
+data. Both pipelines use the same four entity types, identical seed batches,
+the same update statements, and the same Redis Streams.
 
 | Pipeline | Source schema | Sequence allocation | Redis Streams |
 | --- | --- | --- | --- |
-| Publisher | `benchmark_publisher` | After commit, in batches | `changes:benchmark_publisher_<type>` |
-| Debezium | `benchmark_debezium` | In the entity transaction | `changes:benchmark_debezium_<type>` |
+| Publisher | `benchmark_publisher` | After commit, in batches | `changes:<type>` |
+| Debezium | `benchmark_debezium` | In the entity transaction | `changes:<type>` |
 
 ## Setup
 
 ```powershell
 npm run infra:up
 npm run postgres:setup
-npm run benchmark:setup
+npm run postgres:seed
 ```
 
-The benchmark setup is idempotent and does not truncate either schema. Run it
-before starting the relays so both services discover the benchmark objects.
+`postgres:setup` creates both isolated schemas and their pipeline-specific
+triggers. `postgres:seed` inserts the same IDs and business values into both.
+Neither command starts a relay.
+
+An existing local database created by the older JSON benchmark prototype is
+rejected instead of being modified or deleted automatically. Back up anything
+needed, then recreate the local Docker volumes with `npm run infra:down`
+followed by `npm run infra:up` before running the setup commands above.
 
 ## Quick workload run (console output only)
 
@@ -65,21 +71,15 @@ elapsed times, and remaining outbox rows only.
 
 The report runner is the recommended command for measured tests. It performs
 warm-up, captures PostgreSQL counters before and after every measured run, and
-writes both JSON and Markdown files.
-
-Run both pipelines in one report. Both relays must already be running; the
-workloads run sequentially rather than simultaneously, and their order is
-alternated between rounds:
-
-```powershell
-npm run benchmark:report -- --events 20000 --runs 3 --concurrency 32
-```
+writes both JSON and Markdown files. Exactly one `--pipeline` is required, and
+only that relay should be running because both pipelines share Redis and use
+the same Stream names.
 
 Run Publisher by itself:
 
 ```powershell
 npm run benchmark:report -- `
-  --pipelines publisher `
+  --pipeline publisher `
   --events 50000 `
   --warmup-events 2000 `
   --runs 3 `
@@ -90,7 +90,7 @@ Run Debezium by itself:
 
 ```powershell
 npm run benchmark:report -- `
-  --pipelines debezium `
+  --pipeline debezium `
   --events 50000 `
   --warmup-events 2000 `
   --runs 3 `
@@ -141,6 +141,7 @@ $env:REDIS_URL = 'rediss://redis.example:6380'
 npm run benchmark:report -- `
   --environment production `
   --confirm-production-benchmark `
+  --pipeline publisher `
   --events 20000 `
   --warmup-events 2000 `
   --runs 3 `

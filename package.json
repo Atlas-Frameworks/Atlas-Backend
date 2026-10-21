@@ -28,6 +28,8 @@
     "benchmark:debezium:start": "docker compose -f infra/docker-compose.yml -f infra/benchmark/docker-compose.yml up -d debezium-benchmark",
     "benchmark:debezium:stop": "docker compose -f infra/docker-compose.yml -f infra/benchmark/docker-compose.yml stop debezium-benchmark",
     "replicator:simulate": "node apps/replicator-sim/scripts/data-update-simulator.mjs",
+    "replicator:simulate:publisher": "node apps/replicator-sim/scripts/data-update-simulator.mjs --schema benchmark_publisher",
+    "replicator:simulate:debezium": "node apps/replicator-sim/scripts/data-update-simulator.mjs --schema benchmark_debezium",
     "replicator:watch": "node apps/replicator-sim/scripts/sync-event-listener.mjs"
   },
   "allowScripts": {

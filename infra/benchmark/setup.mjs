@@ -9,11 +9,17 @@ import {
 
 async function main() {
   await waitForPostgres();
-  const setupSql = await readFile(
-    path.join(projectRoot, 'infra/benchmark/01-setup.sql'),
-    'utf8',
+  const sqlFiles = [
+    '02-schema.sql',
+    '03-outbox.sql',
+    '04-commerce-sync.sql',
+    '05-register-commerce.sql',
+    '06-debezium-sync.sql',
+  ].map((fileName) => path.join(projectRoot, 'infra/postgres/init', fileName));
+  const sqlParts = await Promise.all(
+    sqlFiles.map((filePath) => readFile(filePath, 'utf8')),
   );
-  await runPsql(['BEGIN;', setupSql, 'COMMIT;'].join('\n\n'));
+  await runPsql(['BEGIN;', ...sqlParts, 'COMMIT;'].join('\n\n'));
   console.log('Publisher and Debezium benchmark schemas are ready.');
 }
 

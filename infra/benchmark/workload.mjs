@@ -6,12 +6,12 @@ export const pipelineDefinitions = {
   publisher: {
     name: 'publisher',
     schema: 'benchmark_publisher',
-    streamPrefix: 'changes:benchmark_publisher_',
+    streamPrefix: 'changes:',
   },
   debezium: {
     name: 'debezium',
     schema: 'benchmark_debezium',
-    streamPrefix: 'changes:benchmark_debezium_',
+    streamPrefix: 'changes:',
   },
 };
 
@@ -88,28 +88,41 @@ function countExpectedEvents(eventCount) {
 
 async function runConcurrentUpdates(options) {
   let nextIndex = 0;
+  const updateStatements = buildUpdateStatements(options.schema);
   const workers = Array.from({ length: options.concurrency }, async () => {
     while (nextIndex < options.eventCount) {
       const eventIndex = nextIndex;
       nextIndex += 1;
       if (eventIndex >= options.eventCount) return;
-      await updateEntity(options, eventIndex);
+      await updateEntity(options, updateStatements, eventIndex);
     }
   });
   await Promise.all(workers);
 }
 
-async function updateEntity(options, eventIndex) {
+async function updateEntity(options, updateStatements, eventIndex) {
   const entityType = entityTypes[eventIndex % entityTypes.length];
   const ids = options.idsByEntity[entityType];
   const entityEventIndex = Math.floor(eventIndex / entityTypes.length);
   const id = ids[entityEventIndex % ids.length];
-  await options.pool.query(
-    `UPDATE ${options.schema}.${entityType}
-     SET data = jsonb_build_object('runId', $1::text, 'eventIndex', $2::integer)
-     WHERE id = $3::uuid`,
-    [options.runId, eventIndex, id],
-  );
+  await options.pool.query(updateStatements[entityType], [options.runId, eventIndex, id]);
+}
+
+function buildUpdateStatements(schema) {
+  return {
+    customers: `UPDATE ${schema}.customers
+      SET address = format('benchmark-%s-%s', $1::text, $2::integer)
+      WHERE id = $3::uuid`,
+    items: `UPDATE ${schema}.items
+      SET type = format('benchmark-%s-%s', $1::text, $2::integer)
+      WHERE id = $3::uuid`,
+    orders: `UPDATE ${schema}.orders
+      SET name = format('benchmark-%s-%s', $1::text, $2::integer)
+      WHERE id = $3::uuid`,
+    distributors: `UPDATE ${schema}.distributors
+      SET name = format('benchmark-%s-%s', $1::text, $2::integer)
+      WHERE id = $3::uuid`,
+  };
 }
 
 async function readStreamLengths(redis, streamPrefix) {

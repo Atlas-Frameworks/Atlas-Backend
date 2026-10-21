@@ -1,67 +1,8 @@
--- Isolated relay benchmark. This file never changes the commerce tables.
-
-CREATE SCHEMA IF NOT EXISTS benchmark_publisher;
-CREATE SCHEMA IF NOT EXISTS benchmark_debezium;
-
-GRANT USAGE ON SCHEMA benchmark_publisher TO atlas_writer, atlas_reader, atlas_publisher;
-GRANT USAGE ON SCHEMA benchmark_debezium TO atlas_writer, atlas_reader, debezium;
-
-DO $$
-DECLARE
-  entity_type text;
-BEGIN
-  FOREACH entity_type IN ARRAY ARRAY['customers', 'items', 'orders', 'distributors'] LOOP
-    EXECUTE format(
-      'CREATE TABLE IF NOT EXISTS benchmark_publisher.%I (
-         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-         data jsonb NOT NULL DEFAULT ''{}''::jsonb,
-         version bigint NOT NULL DEFAULT 1,
-         updated_at timestamptz NOT NULL DEFAULT now()
-       )',
-      entity_type
-    );
-    EXECUTE format(
-      'CREATE TABLE IF NOT EXISTS benchmark_debezium.%I (
-         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-         data jsonb NOT NULL DEFAULT ''{}''::jsonb,
-         version bigint NOT NULL DEFAULT 1,
-         updated_at timestamptz NOT NULL DEFAULT now()
-       )',
-      entity_type
-    );
-
-    EXECUTE format(
-      'INSERT INTO benchmark_publisher.%I (data)
-       SELECT jsonb_build_object(''seed'', seed_number)
-       FROM generate_series(1, 1000) AS seeds(seed_number)
-       WHERE NOT EXISTS (SELECT 1 FROM benchmark_publisher.%I)',
-      entity_type,
-      entity_type
-    );
-    EXECUTE format(
-      'INSERT INTO benchmark_debezium.%I (data)
-       SELECT jsonb_build_object(''seed'', seed_number)
-       FROM generate_series(1, 1000) AS seeds(seed_number)
-       WHERE NOT EXISTS (SELECT 1 FROM benchmark_debezium.%I)',
-      entity_type,
-      entity_type
-    );
-
-    PERFORM register_synced_table(
-      format('benchmark_publisher.%I', entity_type)::regclass,
-      'benchmark_publisher_' || entity_type
-    );
-    EXECUTE format(
-      'GRANT SELECT ON benchmark_publisher.%I TO atlas_writer',
-      entity_type || '_outbox'
-    );
-  END LOOP;
-END;
-$$;
+-- In-transaction sequence allocation and transient outbox used by Debezium.
 
 CREATE TABLE IF NOT EXISTS benchmark_debezium.entity_type_sequence (
   entity_type text PRIMARY KEY,
-  seq bigint NOT NULL DEFAULT 0
+  seq bigint NOT NULL DEFAULT 0 CHECK (seq >= 0)
 );
 
 INSERT INTO benchmark_debezium.entity_type_sequence (entity_type)
@@ -76,6 +17,9 @@ BEGIN
   IF TG_OP = 'INSERT' THEN
     NEW.version := 1;
   ELSE
+    IF NEW.id IS DISTINCT FROM OLD.id THEN
+      RAISE EXCEPTION 'Changing the id of a synchronized entity is not supported';
+    END IF;
     NEW.version := OLD.version + 1;
   END IF;
   NEW.updated_at := now();
@@ -147,7 +91,6 @@ BEGIN
        )',
       outbox_name
     );
-
     EXECUTE format(
       'GRANT SELECT, INSERT, UPDATE, DELETE ON benchmark_debezium.%I TO atlas_writer',
       entity_type
@@ -158,23 +101,22 @@ BEGIN
       outbox_name
     );
     EXECUTE format('GRANT SELECT ON benchmark_debezium.%I TO debezium', outbox_name);
-
     EXECUTE format(
-      'DROP TRIGGER IF EXISTS benchmark_manage_version ON benchmark_debezium.%I',
+      'DROP TRIGGER IF EXISTS atlas_manage_version ON benchmark_debezium.%I',
       entity_type
     );
     EXECUTE format(
-      'DROP TRIGGER IF EXISTS benchmark_capture_change ON benchmark_debezium.%I',
+      'DROP TRIGGER IF EXISTS atlas_sync_change ON benchmark_debezium.%I',
       entity_type
     );
     EXECUTE format(
-      'CREATE TRIGGER benchmark_manage_version
+      'CREATE TRIGGER atlas_manage_version
        BEFORE INSERT OR UPDATE ON benchmark_debezium.%I
        FOR EACH ROW EXECUTE FUNCTION benchmark_debezium.manage_entity_version()',
       entity_type
     );
     EXECUTE format(
-      'CREATE TRIGGER benchmark_capture_change
+      'CREATE TRIGGER atlas_sync_change
        AFTER INSERT OR UPDATE OR DELETE ON benchmark_debezium.%I
        FOR EACH ROW EXECUTE FUNCTION benchmark_debezium.capture_entity_change(%L, %L)',
       entity_type,
@@ -202,6 +144,12 @@ BEGIN
     SELECT 1 FROM pg_publication WHERE pubname = 'benchmark_debezium_outbox'
   ) THEN
     CREATE PUBLICATION benchmark_debezium_outbox FOR TABLE
+      benchmark_debezium.customers_outbox,
+      benchmark_debezium.items_outbox,
+      benchmark_debezium.orders_outbox,
+      benchmark_debezium.distributors_outbox;
+  ELSE
+    ALTER PUBLICATION benchmark_debezium_outbox SET TABLE
       benchmark_debezium.customers_outbox,
       benchmark_debezium.items_outbox,
       benchmark_debezium.orders_outbox,

@@ -1,13 +1,14 @@
 # @atlas/replicator-sim
 
 Local command-line tools for changing commerce rows and observing the
-Postgres → Debezium → Redis synchronization flow. Database setup and initial
+Postgres → selected relay → Redis synchronization flow. Database setup and initial
 data belong to `infra/postgres`, not this workspace.
 
 ## Commands
 
 ```bash
-npm run replicator:simulate
+npm run replicator:simulate:publisher
+npm run replicator:simulate:debezium
 npm run replicator:watch
 ```
 
@@ -23,6 +24,17 @@ npm run watch -w @atlas/replicator-sim
 `scripts/data-update-simulator.mjs` continuously updates random item prices,
 customer addresses, order references, and distributor order lists. Use `--once`
 for one cycle and combine it with `--rollback` for a non-persistent check.
+
+The generic command requires an explicit target schema:
+
+```bash
+npm run replicator:simulate -- --schema benchmark_publisher
+npm run replicator:simulate -- --schema benchmark_debezium
+```
+
+Alternatively, set `REPLICATOR_SCHEMA` to one of those exact values. Other
+schema names are rejected before any SQL runs. The selected schema is printed
+when the simulator starts.
 
 Intervals and maximum batch sizes are configurable with
 `ITEM_INTERVAL_MS`, `CUSTOMER_INTERVAL_MS`, `ORDER_INTERVAL_MS`,
@@ -41,15 +53,17 @@ entries and `--once` performs a single read.
 
 ## Synchronization ownership
 
-The simulator only writes application rows and the listener only reads health
-and Redis. The generic Postgres triggers increment `version` and `typeSeq`,
-create the transactional outbox record, and delete it after it has been written
-to the WAL. Debezium routes the event to `changes:<entityType>`.
+The simulator only writes application rows in the explicitly selected schema,
+and the listener only reads the shared Redis Streams. In
+`benchmark_publisher`, the trigger stores a durable raw event and the Publisher
+allocates `typeSeq` after commit. In `benchmark_debezium`, the trigger allocates
+`typeSeq` in the entity transaction and Debezium relays the transient outbox
+record from WAL. Both pipelines write to `changes:<entityType>`.
 
 Register a new table in its migration with:
 
 ```sql
-SELECT register_synced_table('public.my_new_table');
+SELECT register_synced_table('benchmark_publisher.my_new_table');
 ```
 
 The table must have an `id uuid` column. See

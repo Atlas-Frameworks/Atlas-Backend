@@ -19,9 +19,10 @@ and `typeSeq`.
 ```bash
 npm run infra:up     # start the containers and database services
 npm run postgres:setup # create durable outboxes and synchronization functions
-npm run postgres:seed  # create commerce tables and insert initial data
+npm run postgres:seed  # insert identical data into both benchmark schemas
 npm run publisher:start # allocate typeSeq and publish outbox events to Redis
-npm run replicator:simulate # continuously update random commerce rows
+npm run replicator:simulate:publisher # update the Publisher environment
+npm run replicator:simulate:debezium # update the Debezium environment
 npm run replicator:watch  # print new Redis events
 npm run infra:logs   # follow logs
 npm run infra:down   # stop and delete all data
@@ -30,23 +31,38 @@ npm run infra:down   # stop and delete all data
 The three database stages are deliberately separate:
 
 1. `infra:up` starts Docker and initializes only the database and service roles.
-2. `postgres:setup` creates the synchronized-entity registry, durable outbox
-   claim functions, and generic synchronization functions.
-3. `postgres:seed` creates and registers the commerce tables, then inserts the
-   initial data.
+2. `postgres:setup` creates `benchmark_publisher` and `benchmark_debezium`,
+   their commerce tables, and each pipeline's synchronization flow. `public`
+   contains shared technical functions and the Publisher registry only.
+3. `postgres:seed` inserts one batch with identical IDs and business values
+   into both schemas.
 
 The PostgreSQL setup scripts live under `infra/postgres/scripts`; neither
 command starts Docker. The update simulator and event listener remain under
 `apps/replicator-sim/scripts`.
 
-Every order selects one random item and customer; every distributor selects
-between 1 and 20 distinct random orders. Every inserted row explicitly starts
-at version `1`, and the database triggers publish all 175 inserts through the
-transactional outbox. Running `postgres:seed` again preserves the schema and
-creates another independent batch. Use `--rollback` to create/register the
-commerce tables while validating the generated rows without committing them.
+The setup refuses to overwrite schemas created by the older JSON benchmark
+prototype. For an existing local POC, back up needed data and recreate the
+Docker volumes before applying this layout. No setup command drops schemas or
+commerce data automatically.
 
-Run `replicator:simulate` after seeding to update each entity type independently:
+Every order references an item and customer from the same schema, and every
+distributor contains order IDs from that schema. Running `postgres:seed` again
+preserves both schemas and creates another identical batch in each. Use
+`--rollback` to validate the generated rows without committing them.
+
+Choose the environment explicitly when starting the simulator:
+
+```bash
+npm run replicator:simulate -- --schema benchmark_publisher
+npm run replicator:simulate -- --schema benchmark_debezium
+```
+
+The convenience commands `replicator:simulate:publisher` and
+`replicator:simulate:debezium` set the same schema choice. The simulator rejects
+any other schema and prints the selected target before updating rows.
+
+Each entity type is updated independently:
 
 - item prices every 2 seconds;
 - customer addresses every 3 seconds;
@@ -56,8 +72,8 @@ Run `replicator:simulate` after seeding to update each entity type independently
 Every cycle updates a random number of rows. Override the schedule and batch
 limits with `ITEM_INTERVAL_MS`, `CUSTOMER_INTERVAL_MS`, `ORDER_INTERVAL_MS`,
 `DISTRIBUTOR_INTERVAL_MS`, and the corresponding `*_MAX_UPDATES` variables.
-Use `npm run replicator:simulate -- --once` to run one cycle for every entity type.
-Add `--rollback` to that command to test the updates without saving them.
+Add `--once` to run one cycle for every entity type and `--rollback` to test
+the updates without saving them.
 The normal version and synchronization triggers remain responsible for version
 increments and outbox events.
 
@@ -84,9 +100,10 @@ Connection strings for local development:
 | Reader, primary (fallback) | `postgres://atlas_reader:atlas_reader@localhost:5432/atlas` |
 | Redis (view workers, local dev) | `redis://localhost:6380`, the master-only proxy, so apps running on your machine follow failovers without resolving container hostnames |
 
-The schema files applied by `postgres:seed` create the commerce domain:
-`customers`, `items`, `orders`, and `distributors`. Each order references an item
-and customer; distributor order IDs are stored as a UUID array.
+The schema files applied by `postgres:setup` create `customers`, `items`,
+`orders`, and `distributors` under both benchmark schemas. No commerce entity
+tables are created under `public`. Each order references an item and customer
+inside its own schema; distributor order IDs are stored as a UUID array.
 
 Every entity has a `version` and `updated_at`. Generic database triggers
 increment the version and write a raw event to that entity's durable outbox for
@@ -96,8 +113,8 @@ writes those events into the shared streams
 `changes:customers`, `changes:items`, `changes:orders`, and
 `changes:distributors`.
 
-Register a new application table in its migration with
-`SELECT register_synced_table('public.table_name');`. It must have an `id uuid`
+Register a new Publisher application table in its migration with
+`SELECT register_synced_table('benchmark_publisher.table_name');`. It must have an `id uuid`
 column. Registration adds `version` and `updated_at`, creates the entity-specific
 outbox and generic triggers, and registers the entity's independent sequence.
 

@@ -289,7 +289,7 @@ function buildCaveats(metadata) {
     'The benchmark writes only to benchmark_publisher and benchmark_debezium.',
     'Redis benchmark streams are appended to and are not deleted by this script.',
     'Global database and WAL deltas can include unrelated production traffic.',
-    'Both relay services must already be running and connected to the benchmark schemas.',
+    'Only the selected relay should be running and connected to its benchmark schema.',
   ];
   if (metadata.track_io_timing !== 'on') {
     caveats.push('track_io_timing is off, so PostgreSQL read/write timing is unavailable.');
@@ -306,7 +306,7 @@ function readOptions(arguments_, environment) {
   return {
     environment: environmentName,
     productionConfirmed: arguments_.includes('--confirm-production-benchmark'),
-    pipelines: readPipelines(arguments_),
+    pipelines: [readPipeline(arguments_)],
     events: readPositiveInteger(arguments_, '--events', 20_000),
     warmupEvents: readNonNegativeInteger(arguments_, '--warmup-events', 2_000),
     runs: readPositiveInteger(arguments_, '--runs', 3),
@@ -333,13 +333,11 @@ function validateProductionConfirmation(configuration) {
   );
 }
 
-function readPipelines(arguments_) {
-  const value = readArgument(arguments_, '--pipelines') ?? 'publisher,debezium';
-  const pipelines = [...new Set(value.split(',').map((pipeline) => pipeline.trim()))];
-  if (pipelines.length === 0 || pipelines.some((pipeline) => !['publisher', 'debezium'].includes(pipeline))) {
-    throw new Error('--pipelines must contain publisher, debezium, or both');
-  }
-  return pipelines;
+function readPipeline(arguments_) {
+  const pipeline = readArgument(arguments_, '--pipeline')
+    ?? readArgument(arguments_, '--pipelines');
+  if (pipeline === 'publisher' || pipeline === 'debezium') return pipeline;
+  throw new Error('Choose exactly one --pipeline: publisher or debezium');
 }
 
 function readPositiveInteger(arguments_, name, defaultValue, maximum = Number.MAX_SAFE_INTEGER) {
