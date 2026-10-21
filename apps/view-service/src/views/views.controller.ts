@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   NotFoundException,
@@ -46,6 +47,13 @@ export class ViewsController {
             ? null
             : new Date(view.closesAt).toISOString(),
         listeners: view.listeners.size,
+        windows: [...view.windows.values()].map((window) => ({
+          sort: sortName(window.spec),
+          offset: window.offset,
+          limit: window.limit,
+          listeners: window.listeners.size,
+          seq: window.seq,
+        })),
         sortable: view.sortKeys.types,
         defaultSort: view.defaultSort ? sortName(view.defaultSort) : null,
         sorts: view.sortKeys.indexNames(),
@@ -55,35 +63,68 @@ export class ViewsController {
   }
 
   /**
-   * GET /views/:viewKey/events. The first event is a snapshot of the view
-   * with its rows; every later event has the next seq, sent as the SSE id.
-   * If the rows can't be read, the stream ends and the client reconnects.
+   * GET /views/:viewKey/events — the view's changes, live. Every event's seq
+   * is sent as the SSE id. If the rows can't be read, the stream ends and
+   * the client reconnects.
+   *
+   * - Without limit (?sort= optional): a `snapshot` of every row, then a
+   *   `delta` per tick with the rows added, updated and removed.
+   * - With limit (?sort=item_price:desc&offset=7&limit=20): a `window` with
+   *   that range's ids and rows, then a `window` whenever the range changes,
+   *   with its ids in order and only the rows new to it or changed. A range
+   *   has its own seq. To move it, connect again with the new offset.
    */
   @Sse(':viewKey/events')
-  events(@Param('viewKey') key: string): Observable<MessageEvent> {
+  events(
+    @Param('viewKey') key: string,
+    @Query() query: Record<string, unknown>,
+  ): Observable<MessageEvent> {
     const view = this.loadedView(key);
+    const request = pageRequest(view.sortKeys.types, query);
+    const { limit } = request;
+    if (limit === undefined && request.offset !== undefined) {
+      throw new BadRequestException({
+        code: 'INVALID_PARAM',
+        message: 'offset needs a limit: without one the stream has every row',
+      });
+    }
     const events = new Observable<MessageEvent>((subscriber) => {
-      // The snapshot's seq and the listener are taken in one synchronous step,
-      // so no event can fall between them. Events published while the rows
-      // are read wait, and follow the snapshot.
+      // The first event's seq and the listener are taken in one synchronous
+      // step, so no event can fall between them. Events published while the
+      // rows are read wait, and follow the first event.
       let waiting: ViewEvent[] | undefined = [];
       const listener: ViewListener = {
         send: (event) =>
           waiting ? waiting.push(event) : subscriber.next(toMessage(event)),
       };
-      const snapshot = this.views.page(view, {});
-      this.views.addListener(view, listener);
-      snapshot.then(
-        (data) => {
-          subscriber.next(toMessage({ type: 'snapshot', seq: data.seq, data }));
-          for (const event of waiting ?? []) {
-            subscriber.next(toMessage(event));
+      let first: Promise<ViewEvent>;
+      let stop: () => void;
+      if (limit === undefined) {
+        first = this.views
+          .page(view, request)
+          .then((data) => ({ type: 'snapshot', seq: data.seq, data }));
+        this.views.addListener(view, listener);
+        stop = () => this.views.removeListener(view, listener);
+      } else {
+        const opened = this.views.openWindow(
+          view,
+          { ...request, limit },
+          listener,
+        );
+        first = opened.first;
+        stop = () => this.views.closeWindow(view, opened.window, listener);
+      }
+      first.then(
+        (event) => {
+          subscriber.next(toMessage(event));
+          for (const later of waiting ?? []) {
+            subscriber.next(toMessage(later));
           }
           waiting = undefined;
         },
         (err: unknown) => subscriber.error(err),
       );
-      return () => this.views.removeListener(view, listener);
+      return stop;
     });
     const heartbeat = interval(HEARTBEAT_MS).pipe(
       map((): MessageEvent => ({ comment: 'ping' })),
@@ -158,7 +199,16 @@ export interface ViewsDebug {
     seq: number;
     /** When the view closes because nobody streams it; null while streamed. */
     closesAt: string | null;
+    /** Streams of the whole view. */
     listeners: number;
+    /** Live ranges, each with its own streams and seq. */
+    windows: {
+      sort: string;
+      offset: number;
+      limit: number;
+      listeners: number;
+      seq: number;
+    }[];
     sortable: Readonly<Record<string, SortType>>;
     /** "column:dir", or null when the view sorts by id. */
     defaultSort: string | null;

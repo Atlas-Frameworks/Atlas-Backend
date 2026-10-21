@@ -101,7 +101,7 @@ function setup() {
     buffer.push(changeEvent({ typeSeq, ...overrides }));
   };
 
-  return { db, buffer, tick, open, change };
+  return { db, buffer, tick, open, change, views };
 }
 
 const ids = (view: View) => Object.fromEntries(view.ids);
@@ -177,6 +177,31 @@ describe('TickService', () => {
       total: 1,
     });
     expect(view.ids.get('a')).toBe(1);
+  });
+
+  it('sends a window event to a live range whose rows changed', async () => {
+    const { db, tick, open, change, views } = setup();
+    const { view } = open('v', { a: 1, c: 1 });
+    db.matching.set('a', 1).set('b', 1).set('c', 1);
+    const events: ViewEvent[] = [];
+    views.openWindow(view, { limit: 2 }, { send: (e) => events.push(e) });
+
+    change({ id: 'b', version: 1 });
+    await tick.tick();
+
+    expect(events).toEqual([
+      {
+        type: 'window',
+        seq: 1,
+        data: {
+          sort: 'id',
+          offset: 0,
+          total: 3,
+          ids: ['a', 'b'],
+          rows: [{ id: 'b', version: 1 }],
+        },
+      },
+    ]);
   });
 
   it('removes a deleted order without a query', async () => {

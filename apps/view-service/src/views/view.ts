@@ -1,5 +1,6 @@
 import { SortKeys, type SortSpec, type SortType } from './sort-keys.js';
 import type { SortedIndex } from './sorted-index.js';
+import type { LiveWindow } from './live-window.js';
 import type { SqlStatement } from './sql.js';
 import type { Membership } from './view-diff.js';
 
@@ -29,7 +30,10 @@ export class View implements Membership {
   /** id → hash of the row last seen, to notice a changed column. */
   readonly hashes = new Map<string, number>();
   readonly sortKeys: SortKeys;
+  /** Streams of the whole view: a snapshot, then every delta. */
   readonly listeners = new Set<ViewListener>();
+  /** Live ranges of the view, by window key; each has its own listeners. */
+  readonly windows = new Map<string, LiveWindow>();
   /** Sequence number of the last message sent for this view. */
   seq = 0;
   /** Set while nobody streams the view: it is removed when this fires. */
@@ -59,6 +63,11 @@ export class View implements Membership {
    */
   sorted(spec: SortSpec | undefined): SortedIndex {
     return this.sortKeys.index(spec, this.ids.keys());
+  }
+
+  /** True while any client streams the view, whole or a range of it. */
+  inUse(): boolean {
+    return this.listeners.size > 0 || this.windows.size > 0;
   }
 
   nextSeq(): number {

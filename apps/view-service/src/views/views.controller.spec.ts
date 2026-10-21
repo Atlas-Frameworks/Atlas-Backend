@@ -51,16 +51,16 @@ describe('ViewsController (observable)', () => {
   it('throws 404 for an unknown or not yet loaded view', () => {
     const { controller, view } = setup();
 
-    expect(() => controller.events('unknown')).toThrow(NotFoundException);
+    expect(() => controller.events('unknown', {})).toThrow(NotFoundException);
     view.loaded = false;
-    expect(() => controller.events('key')).toThrow(NotFoundException);
+    expect(() => controller.events('key', {})).toThrow(NotFoundException);
   });
 
   it('sends a snapshot with rows first, then events published while the rows were read', async () => {
     const { controller, service, view } = setup();
     const got: MessageEvent[] = [];
 
-    const sub = controller.events('key').subscribe((m) => got.push(m));
+    const sub = controller.events('key', {}).subscribe((m) => got.push(m));
     service.publish(view, 'test', { n: 1 });
     expect(got).toEqual([]);
 
@@ -90,7 +90,7 @@ describe('ViewsController (observable)', () => {
     loader.fetchByIds.mockRejectedValueOnce(new Error('connection lost'));
 
     const error = new Promise((resolve) =>
-      controller.events('key').subscribe({ error: resolve }),
+      controller.events('key', {}).subscribe({ error: resolve }),
     );
 
     expect(await error).toEqual(new Error('connection lost'));
@@ -101,7 +101,7 @@ describe('ViewsController (observable)', () => {
   it('removes the listener when the client goes away, starting the close timer', () => {
     const { controller, view } = setup();
 
-    const sub = controller.events('key').subscribe();
+    const sub = controller.events('key', {}).subscribe();
     expect(view.listeners.size).toBe(1);
     expect(view.closesAt).toBeUndefined();
     sub.unsubscribe();
@@ -110,12 +110,50 @@ describe('ViewsController (observable)', () => {
     clearTimeout(view.closeTimer);
   });
 
+  it('streams one range when a limit is given: its window first, then its own events', async () => {
+    const { controller, service, view } = setup();
+    view.ids.set('b', 1);
+    const got: MessageEvent[] = [];
+
+    const sub = controller
+      .events('key', { offset: '0', limit: '1' })
+      .subscribe((m) => got.push(m));
+    service.publish(view, 'delta', { n: 1 });
+    await vi.waitFor(() => expect(got).toHaveLength(1));
+
+    expect(got).toEqual([
+      {
+        type: 'window',
+        id: '0',
+        data: {
+          sort: 'id',
+          offset: 0,
+          total: 2,
+          ids: ['a'],
+          rows: [{ id: 'a', version: 1, name: 'x' }],
+        },
+      },
+    ]);
+    expect(view.windows.size).toBe(1);
+    sub.unsubscribe();
+    expect(view.windows.size).toBe(0);
+    clearTimeout(view.closeTimer);
+  });
+
+  it('refuses an offset without a limit', () => {
+    const { controller } = setup();
+
+    expect(() => controller.events('key', { offset: '5' })).toThrow(
+      'offset needs a limit: without one the stream has every row',
+    );
+  });
+
   it('sends a heartbeat comment', () => {
     vi.useFakeTimers();
     const { controller } = setup();
     const got: MessageEvent[] = [];
 
-    const sub = controller.events('key').subscribe((m) => got.push(m));
+    const sub = controller.events('key', {}).subscribe((m) => got.push(m));
     vi.advanceTimersByTime(HEARTBEAT_MS);
 
     expect(got.at(-1)).toEqual({ comment: 'ping' });
@@ -220,6 +258,7 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
           seq: 0,
           closesAt: expect.any(String),
           listeners: 0,
+          windows: [],
           sortable: { name: 'text', item_type: 'text', item_price: 'number' },
           defaultSort: 'name:asc',
           // Built by the page the route returned.

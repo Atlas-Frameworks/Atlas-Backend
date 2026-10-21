@@ -14,6 +14,7 @@ import {
   applyRecheck,
   emptyDiff,
   isEmpty,
+  type Row,
   type ViewDiff,
 } from './view-diff.js';
 import { ViewLoader } from './view-loader.js';
@@ -92,7 +93,8 @@ export class TickService implements OnApplicationBootstrap, OnModuleDestroy {
       batch.events.length === 0 &&
       batch.gapTypes.length === 0 &&
       dirty.size === 0 &&
-      reload.size === 0
+      reload.size === 0 &&
+      !this.registry.list().some(hasStaleWindow)
     ) {
       return;
     }
@@ -197,6 +199,13 @@ export class TickService implements OnApplicationBootstrap, OnModuleDestroy {
         await yieldToLoop();
       }
     }
+
+    // 5. Ranges whose last update couldn't read its rows, on views that didn't change now.
+    for (const view of this.registry.list()) {
+      if (hasStaleWindow(view)) {
+        await this.views.publishWindows(view, new Map());
+      }
+    }
   }
 
   private async recheck(view: View, todo: ViewWork): Promise<void> {
@@ -224,7 +233,7 @@ export class TickService implements OnApplicationBootstrap, OnModuleDestroy {
         this.markDirty(view.viewKey, id, version);
       }
     }
-    this.send(view, diff);
+    await this.send(view, diff);
   }
 
   private async reload(view: View): Promise<void> {
@@ -236,15 +245,23 @@ export class TickService implements OnApplicationBootstrap, OnModuleDestroy {
     this.stats.reloaded += 1;
     const diff = emptyDiff();
     applyFull(view, rows, diff);
-    this.send(view, diff);
+    await this.send(view, diff);
   }
 
-  private send(view: View, diff: ViewDiff): void {
+  /** One `delta` to whole-view streams, and a `window` event to each range that changed. */
+  private async send(view: View, diff: ViewDiff): Promise<void> {
     if (isEmpty(diff)) {
       return;
     }
     this.stats.deltas += 1;
     this.views.publish(view, 'delta', { ...diff, total: view.ids.size });
+    if (view.windows.size > 0) {
+      const changed = new Map<string, Row>();
+      for (const row of [...diff.added, ...diff.updated]) {
+        changed.set(row.id, row);
+      }
+      await this.views.publishWindows(view, changed);
+    }
   }
 
   private markDirty(viewKey: string, id: string, version: number): void {
@@ -275,4 +292,13 @@ function addRecheck(
 ): void {
   const { recheck } = workOf(work, viewKey);
   recheck.set(id, Math.max(recheck.get(id) ?? 0, version));
+}
+
+function hasStaleWindow(view: View): boolean {
+  for (const window of view.windows.values()) {
+    if (window.stale) {
+      return true;
+    }
+  }
+  return false;
 }
