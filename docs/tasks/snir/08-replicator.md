@@ -38,7 +38,7 @@ for that entity type.
 
 - [ ] `atlas_reader` cannot write application or synchronization tables.
 - [ ] Inserts, updates, and deletes reach `changes:<entityType>` through
-  Debezium with the expected version and `typeSeq`.
+      Debezium with the expected version and `typeSeq`.
 - [ ] Concurrent writes produce a gapless sequence per entity type.
 
 ---
@@ -69,11 +69,11 @@ normal writes.
 **Acceptance criteria**
 
 - [ ] `npm run postgres:setup` creates the synchronization infrastructure and a
-  usable Debezium replication slot without creating commerce tables.
+      usable Debezium replication slot without creating commerce tables.
 - [ ] `npm run postgres:seed` creates the commerce domain and inserts one
-  complete independent batch.
+      complete independent batch.
 - [ ] `npm run postgres:seed -- --rollback` creates any missing domain objects
-  but does not change application row counts.
+      but does not change application row counts.
 
 ---
 
@@ -102,6 +102,6 @@ during local development.
 **Acceptance criteria**
 
 - [ ] `npm run replicator:simulate -- --once --rollback` successfully exercises
-  all four update statements without persisting changes.
+      all four update statements without persisting changes.
 - [ ] `npm run replicator:watch -- --history --once` prints available Redis
-  events and exits successfully.
+      events and exits successfully.

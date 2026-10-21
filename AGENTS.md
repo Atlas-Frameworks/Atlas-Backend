@@ -8,7 +8,7 @@ A proof of concept for the design in `docs/architecture-plan.md`. The interfaces
 
 ## Working on a task
 
-1. You will be given a task ID, such as `E-04`. Find it in `docs/tasks/<category>.md` and read the whole section.
+1. You will be given a task ID, such as `E-04`. Find it in `docs/tasks/<owner>/<category>.md` (the board in `docs/tasks/README.md` says who owns it) and read the whole section, plus that owner's `README.md`.
 2. Read the plan sections the task lists, and every contract section it mentions.
 3. Check its **Depends on** list. If a dependency isn't done, build against the contract with a stub or mock and say so in the PR. Don't implement another task's scope.
 4. Branch: `task/<ID>-<short-name>`. PR title: `<ID>: <title>`. In the PR, list each acceptance criterion and how you verified it, with numbers for performance criteria.

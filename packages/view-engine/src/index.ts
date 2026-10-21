@@ -2,7 +2,7 @@
  * @atlas/view-engine
  *
  * Pure logic, no network or database access, so every part is unit-testable.
- * Modules are added by these tasks (see docs/tasks/04-view-engine.md):
+ * Modules are added by these tasks (see docs/tasks/snir/04-view-engine.md):
  *
  * - registry/     E-01  field registry + filter tree types, validation, normalization, view key
  * - compiler/     E-02  filter tree -> parameterized SQL (full build, batched re-check, page/detail fetch)

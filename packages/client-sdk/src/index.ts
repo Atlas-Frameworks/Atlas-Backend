@@ -2,7 +2,7 @@
  * @atlas/client-sdk
  *
  * Must not import Angular, React, Cesium, deck.gl or MapLibre.
- * Modules are added by these tasks (see docs/tasks/06-client-sdk.md):
+ * Modules are added by these tasks (see docs/tasks/boaz/06-client-sdk.md):
  *
  * - core/       C-01  transport per service, protocol, seq checks, resync, reconnect, hidden-tab handling
  * - map-store/  C-02  typed arrays per subscription, slot table, frame scheduling and buffer rotation

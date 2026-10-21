@@ -2,7 +2,7 @@
   "name": "@atlas/view-engine",
   "version": "0.0.1",
   "private": true,
-  "description": "Pure TypeScript view engine (no I/O): field registry, filter compiler, dependency map, typed-array indexes, tick diffing, rendezvous hashing. See docs/tasks/04-view-engine.md.",
+  "description": "Pure TypeScript view engine (no I/O): field registry, filter compiler, dependency map, typed-array indexes, tick diffing, rendezvous hashing. See docs/tasks/snir/04-view-engine.md.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

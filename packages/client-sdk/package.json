@@ -2,7 +2,7 @@
   "name": "@atlas/client-sdk",
   "version": "0.0.1",
   "private": true,
-  "description": "Framework-free browser SDK that runs in a dedicated Web Worker: transport, protocol, sequence checks, typed-array map store, pages, detail, map adapter interface. See docs/tasks/06-client-sdk.md.",
+  "description": "Framework-free browser SDK that runs in a dedicated Web Worker: transport, protocol, sequence checks, typed-array map store, pages, detail, map adapter interface. See docs/tasks/boaz/06-client-sdk.md.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -1,6 +1,6 @@
 # 03 · Protocol and contracts
 
-Turns [contracts.md](../contracts.md) §1, §3 and §4 into code that every component imports from `@atlas/protocol`.
+Turns [contracts.md](../../contracts.md) §1, §3 and §4 into code that every component imports from `@atlas/protocol`.
 
 ---
 
