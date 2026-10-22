@@ -39,7 +39,7 @@ BEGIN
   SELECT array_agg(gen_random_uuid()) INTO customer_ids FROM generate_series(1, 30);
   SELECT array_agg(gen_random_uuid()) INTO item_ids FROM generate_series(1, 100);
   SELECT array_agg(gen_random_uuid()) INTO order_ids FROM generate_series(1, 40);
-  SELECT array_agg(gen_random_uuid()) INTO delivery_company_ids FROM generate_series(1, 3);
+  SELECT array_agg(gen_random_uuid()) INTO delivery_company_ids FROM generate_series(1, 4);
   SELECT array_agg(gen_random_uuid()) INTO distributor_ids FROM generate_series(1, 5);
 
   INSERT INTO benchmark_publisher.customers (id, name, address, sequence)
@@ -89,7 +89,7 @@ BEGIN
     delivery_company_ids[company_number],
     format('Delivery Company %s-%s', batch_label, company_number),
     nextval('benchmark_publisher.replicator_sequence')
-  FROM generate_series(1, 3) AS companies(company_number);
+  FROM generate_series(1, 4) AS companies(company_number);
 
   INSERT INTO benchmark_debezium.delivery_companies (id, name, sequence)
   SELECT id, name, sequence

@@ -59,7 +59,7 @@ normal writes.
    the technical Debezium tables, publication, and generic synchronization
    functions without creating application tables.
 2. `postgres:seed` creates the commerce tables, registers their triggers, and
-   inserts 30 customers, 100 items, 40 orders, 3 delivery companies, and
+   inserts 30 customers, 100 items, 40 orders, 4 delivery companies, and
    5 distributors.
 3. Neither command starts Docker; infrastructure startup remains `infra:up`.
 4. Every order references one generated customer and item. Every distributor

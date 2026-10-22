@@ -100,6 +100,37 @@ BEGIN
 END;
 $$;
 
+INSERT INTO benchmark_publisher.delivery_companies (id, name, sequence)
+VALUES (
+  '00000000-0000-0000-0000-000000000203',
+  'Delivery Company Alternative',
+  nextval('benchmark_publisher.replicator_sequence')
+);
+
+UPDATE benchmark_publisher.distributors
+SET delivery_company_id = '00000000-0000-0000-0000-000000000203',
+    sequence = nextval('benchmark_publisher.replicator_sequence')
+WHERE id = '00000000-0000-0000-0000-000000000202';
+
+DO $$
+DECLARE
+  reassignment_event jsonb;
+BEGIN
+  SELECT payload INTO reassignment_event
+  FROM benchmark_publisher.distributors_outbox
+  WHERE entity_id = '00000000-0000-0000-0000-000000000202'
+  ORDER BY event_id DESC
+  LIMIT 1;
+
+  ASSERT reassignment_event -> 'changes' -> 'old' ->> 'delivery_company_id' =
+    '00000000-0000-0000-0000-000000000201',
+    'distributor reassignment must include the previous delivery company';
+  ASSERT reassignment_event -> 'changes' -> 'new' ->> 'delivery_company_id' =
+    '00000000-0000-0000-0000-000000000203',
+    'distributor reassignment must include the new delivery company';
+END;
+$$;
+
 CREATE TABLE benchmark_publisher.publisher_test_entities (
   id uuid PRIMARY KEY,
   label text NOT NULL,

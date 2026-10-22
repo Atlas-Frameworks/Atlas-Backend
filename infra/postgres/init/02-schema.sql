@@ -141,6 +141,7 @@ DO $$
 DECLARE
   schema_name text;
   migration_company_id uuid := gen_random_uuid();
+  secondary_company_id uuid := gen_random_uuid();
   distributor_table regclass;
   constraint_name text;
 BEGIN
@@ -153,7 +154,7 @@ BEGIN
     );
     EXECUTE format(
       'INSERT INTO %I.delivery_companies (id, name, sequence)
-       SELECT $1, ''Migrated Delivery Company'', nextval(%L)
+       SELECT $1, ''Migrated Delivery Company 1'', nextval(%L)
        WHERE EXISTS (
          SELECT 1 FROM %I.distributors WHERE delivery_company_id IS NULL
        )
@@ -162,6 +163,17 @@ BEGIN
       schema_name || '.replicator_sequence',
       schema_name
     ) USING migration_company_id;
+    EXECUTE format(
+      'INSERT INTO %I.delivery_companies (id, name, sequence)
+       SELECT $1, ''Migrated Delivery Company 2'', nextval(%L)
+       WHERE EXISTS (SELECT 1 FROM %I.distributors)
+         AND (SELECT count(*) FROM %I.delivery_companies) < 2
+       ON CONFLICT (id) DO NOTHING',
+      schema_name,
+      schema_name || '.replicator_sequence',
+      schema_name,
+      schema_name
+    ) USING secondary_company_id;
     EXECUTE format(
       'UPDATE %I.distributors
        SET delivery_company_id = $1,
