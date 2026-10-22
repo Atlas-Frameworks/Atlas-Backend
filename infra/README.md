@@ -47,8 +47,9 @@ prototype. For an existing local POC, back up needed data and recreate the
 Docker volumes before applying this layout. No setup command drops schemas or
 commerce data automatically.
 
-Every order references an item and customer from the same schema, and every
-distributor contains order IDs from that schema. Running `postgres:seed` again
+Every order references an item and customer from the same schema. Every
+distributor contains order IDs and references a delivery company from that
+schema. Running `postgres:seed` again
 preserves both schemas and creates another identical batch in each. Use
 `--rollback` to validate the generated rows without committing them.
 
@@ -68,18 +69,20 @@ Each entity type is updated independently:
 - item prices every 2 seconds;
 - customer addresses every 3 seconds;
 - order item or customer references every 4 seconds;
-- distributor order lists every 5 seconds.
+- delivery company names every 5 seconds;
+- distributor order lists and delivery company references every 6 seconds.
 
 Every cycle updates a random number of rows. Override the schedule and batch
 limits with `ITEM_INTERVAL_MS`, `CUSTOMER_INTERVAL_MS`, `ORDER_INTERVAL_MS`,
-`DISTRIBUTOR_INTERVAL_MS`, and the corresponding `*_MAX_UPDATES` variables.
+`DELIVERY_COMPANY_INTERVAL_MS`, `DISTRIBUTOR_INTERVAL_MS`, and the corresponding
+`*_MAX_UPDATES` variables.
 Add `--once` to run one cycle for every entity type and `--rollback` to test
 the updates without saving them.
 The simulator injects the source `sequence`; synchronization triggers validate
 that updates increase it and create outbox events.
 
 Run `replicator:watch` in a second terminal to monitor the synchronization pipeline.
-It checks Debezium's health endpoint and prints new events from all four Redis
+It checks Debezium's health endpoint and prints new events from all five Redis
 streams. Add `--history` to start at the beginning of each stream, or `--once`
 to perform one read and exit:
 
@@ -89,7 +92,8 @@ npm run replicator:watch -- --history --once
 ```
 
 The listener uses `SYNC_ENTITY_TYPES` (default
-`customers,items,orders,distributors`), `REDIS_READ_COUNT` (default `100`),
+`customers,items,orders,delivery_companies,distributors`), `REDIS_READ_COUNT`
+(default `100`),
 and `REDIS_BLOCK_MS` (default `5000`).
 
 Connection strings for local development:
@@ -102,9 +106,11 @@ Connection strings for local development:
 | Redis (view workers, local dev) | `redis://localhost:6380`, the master-only proxy, so apps running on your machine follow failovers without resolving container hostnames |
 
 The schema files applied by `postgres:setup` create `customers`, `items`,
-`orders`, and `distributors` under both benchmark schemas. No commerce entity
+`orders`, `delivery_companies`, and `distributors` under both benchmark schemas.
+No commerce entity
 tables are created under `public`. Each order references an item and customer
-inside its own schema; distributor order IDs are stored as a UUID array.
+inside its own schema; distributor order IDs are stored as a UUID array and
+`delivery_company_id` is a required foreign key.
 
 Every entity has a source `sequence` and `updated_at`. The replicator supplies
 one globally increasing source sequence across all entity types. Generic database triggers
@@ -112,8 +118,8 @@ validate the sequence and write a raw event to that entity's durable outbox for
 every insert, update, or delete. Upserts carry a generic business-field diff;
 deletes carry the deleted ID without a source sequence. The publisher allocates the entity's `typeSeq` and
 writes those events into the shared streams
-`changes:customers`, `changes:items`, `changes:orders`, and
-`changes:distributors`.
+`changes:customers`, `changes:items`, `changes:orders`,
+`changes:delivery_companies`, and `changes:distributors`.
 
 Register a new Publisher application table in its migration with
 `SELECT benchmark_publisher.register_synced_table('benchmark_publisher.table_name');`.

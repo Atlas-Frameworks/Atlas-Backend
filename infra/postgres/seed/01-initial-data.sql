@@ -6,6 +6,7 @@ DECLARE
   customer_ids uuid[];
   item_ids uuid[];
   order_ids uuid[];
+  delivery_company_ids uuid[];
   distributor_ids uuid[];
   starting_sequence bigint;
 BEGIN
@@ -18,10 +19,12 @@ BEGIN
         SELECT sequence FROM benchmark_publisher.customers
         UNION ALL SELECT sequence FROM benchmark_publisher.items
         UNION ALL SELECT sequence FROM benchmark_publisher.orders
+        UNION ALL SELECT sequence FROM benchmark_publisher.delivery_companies
         UNION ALL SELECT sequence FROM benchmark_publisher.distributors
         UNION ALL SELECT sequence FROM benchmark_debezium.customers
         UNION ALL SELECT sequence FROM benchmark_debezium.items
         UNION ALL SELECT sequence FROM benchmark_debezium.orders
+        UNION ALL SELECT sequence FROM benchmark_debezium.delivery_companies
         UNION ALL SELECT sequence FROM benchmark_debezium.distributors
       ) AS entity
     ), 0)
@@ -36,6 +39,7 @@ BEGIN
   SELECT array_agg(gen_random_uuid()) INTO customer_ids FROM generate_series(1, 30);
   SELECT array_agg(gen_random_uuid()) INTO item_ids FROM generate_series(1, 100);
   SELECT array_agg(gen_random_uuid()) INTO order_ids FROM generate_series(1, 40);
+  SELECT array_agg(gen_random_uuid()) INTO delivery_company_ids FROM generate_series(1, 3);
   SELECT array_agg(gen_random_uuid()) INTO distributor_ids FROM generate_series(1, 5);
 
   INSERT INTO benchmark_publisher.customers (id, name, address, sequence)
@@ -80,7 +84,25 @@ BEGIN
   FROM benchmark_publisher.orders
   WHERE id = ANY(order_ids);
 
-  INSERT INTO benchmark_publisher.distributors (id, name, order_ids, sequence)
+  INSERT INTO benchmark_publisher.delivery_companies (id, name, sequence)
+  SELECT
+    delivery_company_ids[company_number],
+    format('Delivery Company %s-%s', batch_label, company_number),
+    nextval('benchmark_publisher.replicator_sequence')
+  FROM generate_series(1, 3) AS companies(company_number);
+
+  INSERT INTO benchmark_debezium.delivery_companies (id, name, sequence)
+  SELECT id, name, sequence
+  FROM benchmark_publisher.delivery_companies
+  WHERE id = ANY(delivery_company_ids);
+
+  INSERT INTO benchmark_publisher.distributors (
+    id,
+    name,
+    order_ids,
+    delivery_company_id,
+    sequence
+  )
   SELECT
     distributor_ids[distributor_number],
     format('Distributor %s-%s', batch_label, distributor_number),
@@ -88,11 +110,25 @@ BEGIN
       (1 + ((distributor_number - 1) * 8)):
       least(distributor_number * 8, array_length(order_ids, 1))
     ],
+    delivery_company_ids[
+      1 + ((distributor_number - 1) % array_length(delivery_company_ids, 1))
+    ],
     nextval('benchmark_publisher.replicator_sequence')
   FROM generate_series(1, 5) AS distributors(distributor_number);
 
-  INSERT INTO benchmark_debezium.distributors (id, name, order_ids, sequence)
-  SELECT distributor.id, distributor.name, distributor.order_ids, distributor.sequence
+  INSERT INTO benchmark_debezium.distributors (
+    id,
+    name,
+    order_ids,
+    delivery_company_id,
+    sequence
+  )
+  SELECT
+    distributor.id,
+    distributor.name,
+    distributor.order_ids,
+    distributor.delivery_company_id,
+    distributor.sequence
   FROM benchmark_publisher.distributors AS distributor
   WHERE distributor.id = ANY(distributor_ids);
 
@@ -104,6 +140,7 @@ BEGIN
         SELECT sequence FROM benchmark_debezium.customers
         UNION ALL SELECT sequence FROM benchmark_debezium.items
         UNION ALL SELECT sequence FROM benchmark_debezium.orders
+        UNION ALL SELECT sequence FROM benchmark_debezium.delivery_companies
         UNION ALL SELECT sequence FROM benchmark_debezium.distributors
       ) AS entity
     ),

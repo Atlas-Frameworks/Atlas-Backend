@@ -22,7 +22,8 @@ event carries a gapless `typeSeq` for that entity type.
 
 **Deliverables**
 
-1. Tables for `customers`, `items`, `orders`, and `distributors`, with UUID IDs
+1. Tables for `customers`, `items`, `orders`, `delivery_companies`, and
+   `distributors`, with UUID IDs
    and their declared relationships.
 2. Writer, reader, and Debezium roles with least-privilege grants.
 3. Generic `register_synced_table(regclass)` registration for tables with an
@@ -58,7 +59,8 @@ normal writes.
    the technical Debezium tables, publication, and generic synchronization
    functions without creating application tables.
 2. `postgres:seed` creates the commerce tables, registers their triggers, and
-   inserts 30 customers, 100 items, 40 orders, and 5 distributors.
+   inserts 30 customers, 100 items, 40 orders, 3 delivery companies, and
+   5 distributors.
 3. Neither command starts Docker; infrastructure startup remains `infra:up`.
 4. Every order references one generated customer and item. Every distributor
    receives between 1 and 20 distinct generated order IDs.
@@ -103,6 +105,6 @@ during local development.
 **Acceptance criteria**
 
 - [ ] `npm run replicator:simulate -- --once --rollback` successfully exercises
-      all four update statements without persisting changes.
+      all five update statements without persisting changes.
 - [ ] `npm run replicator:watch -- --history --once` prints available Redis
       events and exits successfully.

@@ -1,6 +1,12 @@
 import { performance } from 'node:perf_hooks';
 
-export const entityTypes = ['customers', 'items', 'orders', 'distributors'];
+export const entityTypes = [
+  'customers',
+  'items',
+  'orders',
+  'delivery_companies',
+  'distributors',
+];
 
 export const pipelineDefinitions = {
   publisher: {
@@ -122,6 +128,10 @@ function buildUpdateStatements(schema) {
       SET name = format('benchmark-%s-%s', $1::text, $2::integer),
           sequence = nextval('${schema}.replicator_sequence')
       WHERE id = $3::uuid`,
+    delivery_companies: `UPDATE ${schema}.delivery_companies
+      SET name = format('benchmark-%s-%s', $1::text, $2::integer),
+          sequence = nextval('${schema}.replicator_sequence')
+      WHERE id = $3::uuid`,
     distributors: `UPDATE ${schema}.distributors
       SET name = format('benchmark-%s-%s', $1::text, $2::integer),
           sequence = nextval('${schema}.replicator_sequence')
@@ -161,6 +171,7 @@ async function readOutboxBacklog(pool, schema) {
        SELECT count(*) AS pending_count FROM ${schema}.customers_outbox
        UNION ALL SELECT count(*) FROM ${schema}.items_outbox
        UNION ALL SELECT count(*) FROM ${schema}.orders_outbox
+       UNION ALL SELECT count(*) FROM ${schema}.delivery_companies_outbox
        UNION ALL SELECT count(*) FROM ${schema}.distributors_outbox
      ) AS pending`,
   );

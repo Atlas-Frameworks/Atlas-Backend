@@ -22,7 +22,8 @@ npm run watch -w @atlas/replicator-sim
 ### `simulate`
 
 `scripts/data-update-simulator.mjs` continuously updates random item prices,
-customer addresses, order references, and distributor order lists. Use `--once`
+customer addresses, order references, delivery company names, distributor order
+lists, and distributor delivery company references. Use `--once`
 for one cycle and combine it with `--rollback` for a non-persistent check.
 
 The generic command requires an explicit target schema:
@@ -38,7 +39,8 @@ when the simulator starts.
 
 Intervals and maximum batch sizes are configurable with
 `ITEM_INTERVAL_MS`, `CUSTOMER_INTERVAL_MS`, `ORDER_INTERVAL_MS`,
-`DISTRIBUTOR_INTERVAL_MS`, and their corresponding `*_MAX_UPDATES` variables.
+`DELIVERY_COMPANY_INTERVAL_MS`, `DISTRIBUTOR_INTERVAL_MS`, and their
+corresponding `*_MAX_UPDATES` variables.
 
 ### `watch`
 
@@ -47,7 +49,7 @@ events. It starts from new events by default. `--history` includes existing
 entries and `--once` performs a single read.
 
 `SYNC_ENTITY_TYPES` is a comma-separated list of entity types; it defaults to
-`customers,items,orders,distributors`. Additional settings are
+`customers,items,orders,delivery_companies,distributors`. Additional settings are
 `REDIS_READ_COUNT`, `REDIS_BLOCK_MS`, `DEBEZIUM_HEALTH_INTERVAL_MS`, and
 `DEBEZIUM_HEALTH_URL`.
 

@@ -94,6 +94,7 @@ CREATE PUBLICATION benchmark_debezium_outbox FOR TABLE
   benchmark_debezium.customers_outbox,
   benchmark_debezium.items_outbox,
   benchmark_debezium.orders_outbox,
+  benchmark_debezium.delivery_companies_outbox,
   benchmark_debezium.distributors_outbox;
 ```
 

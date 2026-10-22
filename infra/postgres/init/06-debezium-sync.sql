@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS benchmark_debezium.entity_type_sequence (
 );
 
 INSERT INTO benchmark_debezium.entity_type_sequence (entity_type)
-VALUES ('customers'), ('items'), ('orders'), ('distributors')
+VALUES ('customers'), ('items'), ('orders'), ('delivery_companies'), ('distributors')
 ON CONFLICT (entity_type) DO NOTHING;
 
 CREATE OR REPLACE FUNCTION benchmark_debezium.validate_entity_sequence()
@@ -122,7 +122,13 @@ DECLARE
   entity_type text;
   outbox_name text;
 BEGIN
-  FOREACH entity_type IN ARRAY ARRAY['customers', 'items', 'orders', 'distributors'] LOOP
+  FOREACH entity_type IN ARRAY ARRAY[
+    'customers',
+    'items',
+    'orders',
+    'delivery_companies',
+    'distributors'
+  ] LOOP
     outbox_name := entity_type || '_outbox';
     EXECUTE format(
       'CREATE TABLE IF NOT EXISTS benchmark_debezium.%I (
@@ -200,12 +206,14 @@ BEGIN
       benchmark_debezium.customers_outbox,
       benchmark_debezium.items_outbox,
       benchmark_debezium.orders_outbox,
+      benchmark_debezium.delivery_companies_outbox,
       benchmark_debezium.distributors_outbox;
   ELSE
     ALTER PUBLICATION benchmark_debezium_outbox SET TABLE
       benchmark_debezium.customers_outbox,
       benchmark_debezium.items_outbox,
       benchmark_debezium.orders_outbox,
+      benchmark_debezium.delivery_companies_outbox,
       benchmark_debezium.distributors_outbox;
   END IF;
 END;

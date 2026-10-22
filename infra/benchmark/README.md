@@ -1,7 +1,7 @@
 # Change relay benchmark
 
 This benchmark compares the two relay architectures without changing commerce
-data. Both pipelines use the same four entity types, identical seed batches,
+data. Both pipelines use the same five entity types, identical seed batches,
 the same update statements, and the same Redis Streams.
 
 | Pipeline | Source schema | Sequence allocation | Redis Streams |

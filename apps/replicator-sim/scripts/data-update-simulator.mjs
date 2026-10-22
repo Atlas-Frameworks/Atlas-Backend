@@ -123,8 +123,30 @@ const jobs = [
     `,
   },
   {
+    name: 'delivery companies',
+    intervalMs: readPositiveInteger('DELIVERY_COMPANY_INTERVAL_MS', 5_000),
+    maxUpdates: readPositiveInteger('DELIVERY_COMPANY_MAX_UPDATES', 2),
+    sql: (maxUpdates) => `
+      WITH selected AS MATERIALIZED (
+        SELECT id FROM ${targetSchema}.delivery_companies ORDER BY random()
+        LIMIT (1 + floor(random() * ${maxUpdates}))::integer
+      ), updated AS (
+        UPDATE ${targetSchema}.delivery_companies AS delivery_company
+        SET name = format(
+          'Delivery Company %s',
+          floor(random() * 100000)::integer
+        ),
+            sequence = nextval('${targetSchema}.replicator_sequence')
+        FROM selected
+        WHERE delivery_company.id = selected.id
+        RETURNING delivery_company.id
+      )
+      SELECT count(*) FROM updated;
+    `,
+  },
+  {
     name: 'distributors',
-    intervalMs: readPositiveInteger('DISTRIBUTOR_INTERVAL_MS', 5_000),
+    intervalMs: readPositiveInteger('DISTRIBUTOR_INTERVAL_MS', 6_000),
     maxUpdates: readPositiveInteger('DISTRIBUTOR_MAX_UPDATES', 3),
     sql: (maxUpdates) => `
       WITH selected AS MATERIALIZED (
@@ -139,6 +161,16 @@ const jobs = [
           ORDER BY random()
           LIMIT (1 + floor(random() * 20))::integer
         ),
+            delivery_company_id = COALESCE(
+              (
+                SELECT delivery_company.id
+                FROM ${targetSchema}.delivery_companies AS delivery_company
+                WHERE delivery_company.id <> distributor.delivery_company_id
+                ORDER BY random()
+                LIMIT 1
+              ),
+              distributor.delivery_company_id
+            ),
             sequence = nextval('${targetSchema}.replicator_sequence')
         FROM selected
         WHERE distributor.id = selected.id

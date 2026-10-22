@@ -18,6 +18,85 @@ BEGIN
     'benchmark_publisher.claim_sync_events(text,text,integer,integer)',
     'EXECUTE'
   ), 'writer role must not be allowed to claim events';
+  ASSERT to_regclass('benchmark_publisher.delivery_companies') IS NOT NULL,
+    'publisher delivery companies table must exist';
+  ASSERT to_regclass('benchmark_debezium.delivery_companies') IS NOT NULL,
+    'Debezium delivery companies table must exist';
+  ASSERT to_regclass('benchmark_publisher.delivery_companies_sync_state') IS NOT NULL,
+    'publisher delivery companies must be registered';
+  ASSERT to_regclass('benchmark_debezium.delivery_companies_outbox') IS NOT NULL,
+    'Debezium delivery companies outbox must exist';
+  ASSERT EXISTS (
+    SELECT 1
+    FROM pg_attribute
+    WHERE attrelid = 'benchmark_publisher.distributors'::regclass
+      AND attname = 'delivery_company_id'
+      AND attnotnull
+      AND NOT attisdropped
+  ), 'publisher distributors must require a delivery company';
+  ASSERT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'benchmark_publisher.distributors'::regclass
+      AND confrelid = 'benchmark_publisher.delivery_companies'::regclass
+      AND contype = 'f'
+  ), 'publisher distributor delivery company foreign key must exist';
+  ASSERT EXISTS (
+    SELECT 1
+    FROM benchmark_debezium.entity_type_sequence
+    WHERE entity_type = 'delivery_companies'
+  ), 'Debezium delivery companies sequence state must exist';
+  ASSERT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'benchmark_debezium.distributors'::regclass
+      AND confrelid = 'benchmark_debezium.delivery_companies'::regclass
+      AND contype = 'f'
+  ), 'Debezium distributor delivery company foreign key must exist';
+END;
+$$;
+
+INSERT INTO benchmark_publisher.delivery_companies (id, name, sequence)
+VALUES (
+  '00000000-0000-0000-0000-000000000201',
+  'Delivery Company Test',
+  nextval('benchmark_publisher.replicator_sequence')
+);
+
+INSERT INTO benchmark_publisher.distributors (
+  id,
+  name,
+  order_ids,
+  delivery_company_id,
+  sequence
+)
+VALUES (
+  '00000000-0000-0000-0000-000000000202',
+  'Distributor Test',
+  ARRAY[]::uuid[],
+  '00000000-0000-0000-0000-000000000201',
+  nextval('benchmark_publisher.replicator_sequence')
+);
+
+DO $$
+DECLARE
+  company_event jsonb;
+  distributor_event jsonb;
+BEGIN
+  SELECT payload INTO company_event
+  FROM benchmark_publisher.delivery_companies_outbox
+  WHERE entity_id = '00000000-0000-0000-0000-000000000201';
+  SELECT payload INTO distributor_event
+  FROM benchmark_publisher.distributors_outbox
+  WHERE entity_id = '00000000-0000-0000-0000-000000000202';
+
+  ASSERT company_event ->> 'type' = 'delivery_companies',
+    'delivery company insert must create its own event';
+  ASSERT company_event -> 'changes' -> 'new' ->> 'name' = 'Delivery Company Test',
+    'delivery company event must contain its name';
+  ASSERT distributor_event -> 'changes' -> 'new' ->> 'delivery_company_id' =
+    '00000000-0000-0000-0000-000000000201',
+    'distributor event must contain its delivery company reference';
 END;
 $$;
 

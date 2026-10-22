@@ -4,6 +4,7 @@
 SELECT benchmark_publisher.register_synced_table('benchmark_publisher.customers', 'customers');
 SELECT benchmark_publisher.register_synced_table('benchmark_publisher.items', 'items');
 SELECT benchmark_publisher.register_synced_table('benchmark_publisher.orders', 'orders');
+SELECT benchmark_publisher.register_synced_table('benchmark_publisher.delivery_companies', 'delivery_companies');
 SELECT benchmark_publisher.register_synced_table('benchmark_publisher.distributors', 'distributors');
 
 -- Migrate any additional tables that were registered before state became
