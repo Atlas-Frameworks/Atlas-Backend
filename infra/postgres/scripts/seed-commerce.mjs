@@ -4,7 +4,6 @@ import path from 'node:path';
 import {
   projectRoot,
   runPsql,
-  waitForDebeziumSlot,
   waitForPostgres,
 } from './docker-postgres.mjs';
 
@@ -12,21 +11,10 @@ const rollBack = process.argv.includes('--rollback');
 
 async function main() {
   await waitForPostgres();
-  await waitForDebeziumSlot(1);
-
-  const sqlFiles = [
-    path.join(projectRoot, 'infra/postgres/init/02-schema.sql'),
-    path.join(projectRoot, 'infra/postgres/init/05-register-commerce.sql'),
+  const seedSql = await readFile(
     path.join(projectRoot, 'infra/postgres/seed/01-initial-data.sql'),
-  ];
-  const [schemaSql, registrationSql, seedSql] = await Promise.all(
-    sqlFiles.map((filePath) => readFile(filePath, 'utf8')),
+    'utf8',
   );
-
-  await runPsql(
-    ['BEGIN;', schemaSql, registrationSql, 'COMMIT;'].join('\n\n'),
-  );
-  console.log('Commerce tables and synchronization triggers are ready.');
 
   const seedDataSql = [
     'BEGIN;',
@@ -39,7 +27,7 @@ async function main() {
   console.log(
     rollBack
       ? 'Initial commerce data was validated and rolled back.'
-      : 'Initial commerce data committed successfully.',
+      : 'Identical commerce data committed to both benchmark schemas.',
   );
 }
 

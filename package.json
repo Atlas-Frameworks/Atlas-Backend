@@ -20,7 +20,16 @@
     "infra:logs": "docker compose -f infra/docker-compose.yml logs -f --tail=100",
     "postgres:setup": "node infra/postgres/scripts/setup-synchronization.mjs",
     "postgres:seed": "node infra/postgres/scripts/seed-commerce.mjs",
+    "publisher:start": "npm run dev --workspace @atlas/change-publisher",
+    "benchmark:setup": "node infra/benchmark/setup.mjs",
+    "benchmark:run": "node infra/benchmark/run.mjs",
+    "benchmark:report": "node infra/benchmark/report.mjs",
+    "benchmark:debezium:build": "docker compose -f infra/docker-compose.yml -f infra/benchmark/docker-compose.yml build debezium-benchmark",
+    "benchmark:debezium:start": "docker compose -f infra/docker-compose.yml -f infra/benchmark/docker-compose.yml up -d debezium-benchmark",
+    "benchmark:debezium:stop": "docker compose -f infra/docker-compose.yml -f infra/benchmark/docker-compose.yml stop debezium-benchmark",
     "replicator:simulate": "node apps/replicator-sim/scripts/data-update-simulator.mjs",
+    "replicator:simulate:publisher": "node apps/replicator-sim/scripts/data-update-simulator.mjs --schema benchmark_publisher",
+    "replicator:simulate:debezium": "node apps/replicator-sim/scripts/data-update-simulator.mjs --schema benchmark_debezium",
     "replicator:watch": "node apps/replicator-sim/scripts/sync-event-listener.mjs"
   },
   "allowScripts": {

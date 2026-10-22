@@ -1,0 +1,15 @@
+services:
+  debezium-benchmark:
+    build:
+      context: ./debezium
+    image: atlas/debezium-server:3.7.0.Final
+    restart: unless-stopped
+    volumes:
+      - ./benchmark/debezium.properties:/debezium/config/application.properties:ro
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-proxy:
+        condition: service_started
+    ports:
+      - "8081:8080"

@@ -1,0 +1,8 @@
+{
+  "databaseUrl": "postgresql://atlas_publisher:atlas_publisher@localhost:5432/atlas",
+  "redisUrl": "redis://localhost:6380",
+  "sourceSchema": "benchmark_publisher",
+  "batchSize": 1000,
+  "leaseSeconds": 30,
+  "idleDelayMilliseconds": 100
+}

@@ -136,7 +136,7 @@ metrics/     S-09
    2. Read the primary's current change-log position and `waitForReplica`.
    3. Run link queries for related-entity changes; run full runs for connection changes through the build queue.
    4. One `runRecheck` per entity type covering all candidate views.
-   5. `applyRecheck` per view; version guard, with stale IDs retried next tick.
+   5. `applyRecheck` per view; source-sequence guard, with stale IDs retried next tick.
    6. Build deltas per subscription: map deltas from event `map` fields; page windows via `window()` plus `fetchRows` for new or changed visible IDs only; detail updates.
    7. Hand frames to the delivery layer: local topic publish (S-05) and remote streams (S-07).
    8. Yield with `setImmediate` between views, so ticks never block sockets for long.

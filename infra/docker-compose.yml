@@ -77,29 +77,13 @@ services:
   sentinel-2: *sentinel
   sentinel-3: *sentinel
 
-  # Debezium's Redis sink has no Sentinel support, so it connects through this proxy,
-  # which only ever routes to the node that currently reports role:master.
+  # Stable endpoint that only routes to the node currently reporting role:master.
   redis-proxy:
     image: haproxy:3.2
     volumes:
       - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     ports: ["6380:6380", "8404:8404"]
     depends_on: [redis-primary, redis-replica]
-
-  # ---------- Debezium Server: outbox -> Redis Streams (task I-03) ----------
-  debezium:
-    build:
-      context: ./debezium
-    image: atlas/debezium-server:3.7.0.Final
-    restart: unless-stopped
-    volumes:
-      - ./debezium/application.properties:/debezium/config/application.properties:ro
-    depends_on:
-      postgres-primary:
-        condition: service_healthy
-      redis-proxy:
-        condition: service_started
-    ports: ["8080:8080"]
 
 volumes:
   pg-primary:

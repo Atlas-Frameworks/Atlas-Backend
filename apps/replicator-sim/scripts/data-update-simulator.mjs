@@ -11,10 +11,23 @@ const projectRoot = path.resolve(
 
 const runOnce = process.argv.includes('--once');
 const rollBack = process.argv.includes('--rollback');
+const targetSchema = readTargetSchema();
 let shuttingDown = false;
 
 if (rollBack && !runOnce) {
   throw new Error('--rollback can only be used together with --once');
+}
+
+function readTargetSchema() {
+  const schemaArgumentIndex = process.argv.indexOf('--schema');
+  const schemaArgument = schemaArgumentIndex === -1
+    ? undefined
+    : process.argv[schemaArgumentIndex + 1];
+  const schema = schemaArgument ?? process.env.REPLICATOR_SCHEMA;
+  if (schema === 'benchmark_publisher' || schema === 'benchmark_debezium') return schema;
+  throw new Error(
+    'Choose --schema benchmark_publisher or --schema benchmark_debezium',
+  );
 }
 
 function readPositiveInteger(name, defaultValue) {
@@ -35,11 +48,12 @@ const jobs = [
     maxUpdates: readPositiveInteger('ITEM_MAX_UPDATES', 8),
     sql: (maxUpdates) => `
       WITH selected AS MATERIALIZED (
-        SELECT id FROM items ORDER BY random()
+        SELECT id FROM ${targetSchema}.items ORDER BY random()
         LIMIT (1 + floor(random() * ${maxUpdates}))::integer
       ), updated AS (
-        UPDATE items AS item
-        SET price = round((5 + random() * 495)::numeric, 2)
+        UPDATE ${targetSchema}.items AS item
+        SET price = round((5 + random() * 495)::numeric, 2),
+            sequence = nextval('${targetSchema}.replicator_sequence')
         FROM selected
         WHERE item.id = selected.id
         RETURNING item.id
@@ -53,15 +67,16 @@ const jobs = [
     maxUpdates: readPositiveInteger('CUSTOMER_MAX_UPDATES', 6),
     sql: (maxUpdates) => `
       WITH selected AS MATERIALIZED (
-        SELECT id FROM customers ORDER BY random()
+        SELECT id FROM ${targetSchema}.customers ORDER BY random()
         LIMIT (1 + floor(random() * ${maxUpdates}))::integer
       ), updated AS (
-        UPDATE customers AS customer
+        UPDATE ${targetSchema}.customers AS customer
         SET address = format(
           '%s %s Street',
           1 + floor(random() * 999)::integer,
           (ARRAY['Atlas', 'Market', 'Oak', 'River', 'Sunset'])[1 + floor(random() * 5)::integer]
-        )
+        ),
+            sequence = nextval('${targetSchema}.replicator_sequence')
         FROM selected
         WHERE customer.id = selected.id
         RETURNING customer.id
@@ -76,27 +91,28 @@ const jobs = [
     sql: (maxUpdates) => `
       WITH selected AS MATERIALIZED (
         SELECT id, item_id, customer_id, random() < 0.5 AS change_item
-        FROM orders
+        FROM ${targetSchema}.orders
         ORDER BY random()
         LIMIT (1 + floor(random() * ${maxUpdates}))::integer
       ), replacements AS MATERIALIZED (
         SELECT
           selected.id,
           CASE WHEN selected.change_item THEN (
-            SELECT id FROM items
+            SELECT id FROM ${targetSchema}.items
             WHERE id <> selected.item_id
             ORDER BY random() LIMIT 1
           ) ELSE selected.item_id END AS item_id,
           CASE WHEN selected.change_item THEN selected.customer_id ELSE (
-            SELECT id FROM customers
+            SELECT id FROM ${targetSchema}.customers
             WHERE id <> selected.customer_id
             ORDER BY random() LIMIT 1
           ) END AS customer_id
         FROM selected
       ), updated AS (
-        UPDATE orders AS customer_order
+        UPDATE ${targetSchema}.orders AS customer_order
         SET item_id = replacements.item_id,
-            customer_id = replacements.customer_id
+            customer_id = replacements.customer_id,
+            sequence = nextval('${targetSchema}.replicator_sequence')
         FROM replacements
         WHERE customer_order.id = replacements.id
           AND replacements.item_id IS NOT NULL
@@ -112,17 +128,18 @@ const jobs = [
     maxUpdates: readPositiveInteger('DISTRIBUTOR_MAX_UPDATES', 3),
     sql: (maxUpdates) => `
       WITH selected AS MATERIALIZED (
-        SELECT id FROM distributors ORDER BY random()
+        SELECT id FROM ${targetSchema}.distributors ORDER BY random()
         LIMIT (1 + floor(random() * ${maxUpdates}))::integer
       ), updated AS (
-        UPDATE distributors AS distributor
+        UPDATE ${targetSchema}.distributors AS distributor
         SET order_ids = ARRAY(
           SELECT customer_order.id
-          FROM orders AS customer_order
+          FROM ${targetSchema}.orders AS customer_order
           WHERE customer_order.id IS DISTINCT FROM distributor.id
           ORDER BY random()
           LIMIT (1 + floor(random() * 20))::integer
-        )
+        ),
+            sequence = nextval('${targetSchema}.replicator_sequence')
         FROM selected
         WHERE distributor.id = selected.id
         RETURNING distributor.id
@@ -208,12 +225,13 @@ process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
 
 if (runOnce) {
+  console.log(`Replicator target schema: ${targetSchema}`);
   const results = await Promise.all(jobs.map(runJob));
   if (results.includes(false)) {
     process.exitCode = 1;
   }
 } else {
-  console.log('Data update simulator started. Press Ctrl+C to stop.');
+  console.log(`Data update simulator started for ${targetSchema}. Press Ctrl+C to stop.`);
   for (const job of jobs) {
     console.log(
       `${job.name}: every ${job.intervalMs} ms, updating 1-${job.maxUpdates} row(s)`,

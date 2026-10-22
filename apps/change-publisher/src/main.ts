@@ -1,0 +1,47 @@
+import { loadPublisherConfig } from './config.js';
+import { runEntityPublishLoop } from './entity-publish-loop.js';
+import { PostgresEventRepository } from './postgres-event-repository.js';
+import { RedisEventPublisher } from './redis-event-publisher.js';
+
+const config = await loadPublisherConfig(process.env['PUBLISHER_ENV']);
+const repository = new PostgresEventRepository({
+  connectionString: config.databaseUrl,
+  sourceSchema: config.sourceSchema,
+});
+const publisher = new RedisEventPublisher(config.redisUrl);
+const abortController = new AbortController();
+
+process.once('SIGINT', () => abortController.abort());
+process.once('SIGTERM', () => abortController.abort());
+
+try {
+  await publisher.connect();
+  const entityTypes = await repository.listEntityTypes();
+  if (entityTypes.length === 0) {
+    throw new Error('No synchronized entity types are registered');
+  }
+
+  console.log(`Publisher source schema: ${config.sourceSchema}`);
+  console.log(`Starting independent publish loops for: ${entityTypes.join(', ')}`);
+  await Promise.all(
+    entityTypes.map((entityType) =>
+      runEntityPublishLoop(
+        repository,
+        publisher,
+        {
+          entityType,
+          owner: config.owner,
+          batchSize: config.batchSize,
+          leaseSeconds: config.leaseSeconds,
+          idleDelayMilliseconds: config.idleDelayMilliseconds,
+        },
+        abortController.signal,
+        (failedEntityType, error) => {
+          console.error(`Publish failed for ${failedEntityType}; the batch will be retried`, error);
+        },
+      ),
+    ),
+  );
+} finally {
+  await Promise.allSettled([repository.close(), publisher.close()]);
+}

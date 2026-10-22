@@ -25,16 +25,9 @@ const runOnce = process.argv.includes('--once');
 const includeHistory = process.argv.includes('--history');
 const readCount = readPositiveInteger('REDIS_READ_COUNT', 100);
 const blockMilliseconds = readPositiveInteger('REDIS_BLOCK_MS', 5_000);
-const healthIntervalMilliseconds = readPositiveInteger(
-  'DEBEZIUM_HEALTH_INTERVAL_MS',
-  10_000,
-);
-const debeziumHealthUrl =
-  process.env.DEBEZIUM_HEALTH_URL ?? 'http://localhost:8080/q/health';
 
 let stopping = false;
 let activeChild;
-let previousHealth;
 
 function readPositiveInteger(name, defaultValue) {
   const rawValue = process.env[name];
@@ -142,22 +135,32 @@ function parseJson(value) {
 }
 
 function printEntry(stream, entryId, fields) {
+  const valueIndex = fields.indexOf('value');
+  if (valueIndex !== -1) {
+    printEvent(stream, entryId, parseJson(fields[valueIndex + 1]));
+    return;
+  }
   for (let index = 0; index < fields.length; index += 2) {
-    const entityKey = parseJson(fields[index]);
-    const event = parseJson(fields[index + 1]);
+    printEvent(
+      stream,
+      entryId,
+      parseJson(fields[index + 1]),
+      parseJson(fields[index]),
+    );
+  }
+}
 
-    console.log('\n------------------------------------------------------------');
-    console.log(`[Redis] ${stream} | entry ${entryId}`);
-    console.log(`entity key: ${entityKey}`);
-
-    if (event !== null && typeof event === 'object') {
-      console.log(
-        `event: ${event.op ?? '?'} ${event.type ?? '?'} | version=${event.version ?? '?'} | typeSeq=${event.typeSeq ?? '?'}`,
-      );
-      console.log(JSON.stringify(event, null, 2));
-    } else {
-      console.log(`raw value: ${event}`);
-    }
+function printEvent(stream, entryId, event, entityKey) {
+  console.log('\n------------------------------------------------------------');
+  console.log(`[Redis] ${stream} | entry ${entryId}`);
+  if (entityKey !== undefined) console.log(`entity key: ${entityKey}`);
+  if (event !== null && typeof event === 'object') {
+    console.log(
+      `event: ${event.op ?? '?'} ${event.type ?? '?'} | sequence=${event.sequence ?? '-'} | typeSeq=${event.typeSeq ?? '?'}`,
+    );
+    console.log(JSON.stringify(event, null, 2));
+  } else {
+    console.log(`fields: ${JSON.stringify(fields)}`);
   }
 }
 
@@ -191,32 +194,6 @@ async function readEvents(cursors) {
   ]);
 }
 
-async function checkDebeziumHealth() {
-  try {
-    const response = await fetch(debeziumHealthUrl, {
-      signal: AbortSignal.timeout(3_000),
-    });
-    const body = await response.json();
-    const health = response.ok ? (body.status ?? 'UP') : `HTTP ${response.status}`;
-
-    if (health !== previousHealth) {
-      console.log(
-        `[Debezium] health=${health} | ${debeziumHealthUrl}`,
-      );
-      if (!response.ok) {
-        console.log(JSON.stringify(body, null, 2));
-      }
-      previousHealth = health;
-    }
-  } catch (error) {
-    const health = `DOWN (${error.message})`;
-    if (health !== previousHealth) {
-      console.error(`[Debezium] ${health} | ${debeziumHealthUrl}`);
-      previousHealth = health;
-    }
-  }
-}
-
 function stop() {
   if (stopping) {
     return;
@@ -231,7 +208,6 @@ process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
 
 async function main() {
-  await checkDebeziumHealth();
   const cursors = await createStartingCursors();
 
   console.log(
@@ -244,22 +220,13 @@ async function main() {
     return;
   }
 
-  const healthTimer = setInterval(
-    checkDebeziumHealth,
-    healthIntervalMilliseconds,
-  );
-
-  try {
-    while (!stopping) {
-      try {
-        processBatch(await readEvents(cursors), cursors);
-      } catch (error) {
-        console.error(`[Redis] ${error.message}`);
-        await delay(2_000);
-      }
+  while (!stopping) {
+    try {
+      processBatch(await readEvents(cursors), cursors);
+    } catch (error) {
+      console.error(`[Redis] ${error.message}`);
+      await delay(2_000);
     }
-  } finally {
-    clearInterval(healthTimer);
   }
 }
 

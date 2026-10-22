@@ -12,4 +12,5 @@ coverage/
 .vscode/*
 !.vscode/extensions.json
 infra/.data/
+infra/benchmark/reports/
 packages/protocol/src/gen/

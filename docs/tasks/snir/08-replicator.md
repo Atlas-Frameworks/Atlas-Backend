@@ -2,8 +2,8 @@
 
 Postgres setup and initial commerce data live under `infra/postgres`.
 `replicator-sim` contains only the continuous update simulator and the
-Debezium-to-Redis event listener. Postgres triggers own event and version
-bookkeeping; the scripts do not construct outbox events themselves.
+Debezium-to-Redis event listener. The simulator injects the source sequence and
+Postgres triggers construct outbox events.
 
 Plan section: "Write path: replicator to Redis Stream". Contract:
 [contracts.md](../contracts.md) §1.
@@ -17,8 +17,8 @@ Plan section: "Write path: replicator to Redis Stream". Contract:
 - **Files:** `infra/postgres/init/*.sql`
 
 **Goal.** Every committed insert, update, or delete on a registered commerce
-table produces exactly one event with an entity version and a gapless sequence
-for that entity type.
+table produces exactly one event. Upserts carry the source sequence and every
+event carries a gapless `typeSeq` for that entity type.
 
 **Deliverables**
 
@@ -27,8 +27,8 @@ for that entity type.
 2. Writer, reader, and Debezium roles with least-privilege grants.
 3. Generic `register_synced_table(regclass)` registration for tables with an
    `id uuid` column.
-4. A `BEFORE` trigger that initializes or increments `version` and updates
-   `updated_at`.
+4. A `BEFORE` trigger that validates an increasing source `sequence` on insert
+   and update and refreshes `updated_at`.
 5. An `AFTER` trigger that allocates `typeSeq`, writes the outbox record, and
    removes it in the same transaction after the WAL-visible change is created.
 6. Upsert events containing `changes.old` and `changes.new`; delete events carry
@@ -38,7 +38,7 @@ for that entity type.
 
 - [ ] `atlas_reader` cannot write application or synchronization tables.
 - [ ] Inserts, updates, and deletes reach `changes:<entityType>` through
-      Debezium with the expected version and `typeSeq`.
+      Debezium with the expected source `sequence` on upserts and `typeSeq` on all events.
 - [ ] Concurrent writes produce a gapless sequence per entity type.
 
 ---
@@ -62,7 +62,8 @@ normal writes.
 3. Neither command starts Docker; infrastructure startup remains `infra:up`.
 4. Every order references one generated customer and item. Every distributor
    receives between 1 and 20 distinct generated order IDs.
-5. Every inserted row explicitly starts at version `1`.
+5. Every inserted row receives a globally increasing source `sequence`; values
+   may skip within an entity type because other types share the same source counter.
 6. Both schemas are idempotent. `postgres:seed -- --rollback` keeps the tables
    and triggers but validates the generated data without committing rows.
 
