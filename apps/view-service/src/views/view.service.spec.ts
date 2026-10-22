@@ -1,6 +1,7 @@
 import type { ChangeFeed } from '../changes/change-feed.js';
 import type { QueryDefinition } from './define-query.js';
 import { DependencyIndex } from './dependency-index.js';
+import { asc } from './order.js';
 import { sql } from './sql.js';
 import { hold } from './view-diff.js';
 import type { ViewLoader } from './view-loader.js';
@@ -31,7 +32,7 @@ describe('ViewService', () => {
     expect(service.page(view, {})).toEqual({
       viewKey: 'key',
       seq: 1,
-      sort: 'id',
+      orderBy: 'id',
       offset: 0,
       total: 2,
       rows: [
@@ -57,8 +58,7 @@ describe('ViewService', () => {
         'key',
         'orders',
         { text: 'SELECT', values: [] },
-        { price: 'number' },
-        { column: 'price', dir: 'asc' },
+        [asc('price', 'number')],
       );
       for (const [id, price] of [
         ['a', 50],
@@ -79,7 +79,7 @@ describe('ViewService', () => {
 
       const page = service.page(view, { offset: 1, limit: 3 });
 
-      expect(page).toMatchObject({ sort: 'price:asc', offset: 1, total: 5 });
+      expect(page).toMatchObject({ orderBy: 'price asc', offset: 1, total: 5 });
       expect(page.rows).toEqual([
         { id: 'd', version: 1, price: 20 },
         { id: 'c', version: 1, price: 30 },
@@ -92,16 +92,13 @@ describe('ViewService', () => {
       expect(loader.fetchByIds).not.toHaveBeenCalled();
     });
 
-    it('reads every row from offset on without a limit, in any sort', () => {
+    it('reads every row from offset on without a limit', () => {
       const { service, view, ids } = sorted();
 
-      const page = service.page(view, {
-        sort: { column: 'price', dir: 'desc' },
-        offset: 2,
-      });
+      const page = service.page(view, { offset: 2 });
 
-      expect(page).toMatchObject({ sort: 'price:desc', total: 5 });
-      expect(ids(page)).toEqual(['c', 'd', 'e']);
+      expect(page).toMatchObject({ orderBy: 'price asc', total: 5 });
+      expect(ids(page)).toEqual(['c', 'b', 'a']);
     });
 
     it('returns no rows past the end', () => {

@@ -10,7 +10,7 @@ export interface Membership {
   readonly ids: Map<string, number>;
   /** id → the row as the query last returned it, so any page needs no query. */
   readonly rows: Map<string, Row>;
-  /** The sortable columns' values of every id held, and the sorted indexes. */
+  /** The ORDER BY columns' values of every id held, and the ids in that order. */
   readonly sortKeys: SortKeys;
   /** Related id → held ids, for each `via` column. */
   readonly refs: RefIndex;

@@ -1,10 +1,9 @@
-import type { SortSpec } from './sort-keys.js';
-import { sortName } from './sorted-index.js';
 import type { ViewListener } from './view.js';
 
 /** The data of a `window` event: one range of a view in one sort. */
 export interface WindowData {
-  sort: string;
+  /** The query's ORDER BY, e.g. "item_price desc, name asc". */
+  orderBy: string;
   offset: number;
   /** Rows in the whole view. */
   total: number;
@@ -15,8 +14,8 @@ export interface WindowData {
 }
 
 /**
- * One range of a view kept live, e.g. rows 7–26 by price. Every client
- * streaming the same view, sort and range shares it. It has its own seq,
+ * One range of a view kept live, e.g. rows 7–26. Every client streaming the
+ * same view and range shares it. It has its own seq,
  * because it gets an event only when its own range changes.
  */
 export class LiveWindow {
@@ -29,14 +28,12 @@ export class LiveWindow {
   seq = 0;
 
   constructor(
-    /** Undefined: by id. */
-    readonly spec: SortSpec | undefined,
     readonly offset: number,
     readonly limit: number,
   ) {}
 
   get key(): string {
-    return windowKey(this.spec, this.offset, this.limit);
+    return windowKey(this.offset, this.limit);
   }
 
   nextSeq(): number {
@@ -45,10 +42,6 @@ export class LiveWindow {
   }
 }
 
-export function windowKey(
-  spec: SortSpec | undefined,
-  offset: number,
-  limit: number,
-): string {
-  return `${sortName(spec)}|${offset}|${limit}`;
+export function windowKey(offset: number, limit: number): string {
+  return `${offset}|${limit}`;
 }

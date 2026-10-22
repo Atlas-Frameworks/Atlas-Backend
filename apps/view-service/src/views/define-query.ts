@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { parseSort, type SortSpec, type SortType } from './sort-keys.js';
 import type { Sql } from './sql.js';
 
 /**
@@ -18,13 +17,10 @@ export interface QueryDefinition<P> {
    */
   dependsOn: Record<string, Dependency>;
   /**
-   * Columns a client may sort by, and how they compare. The SQL must select
-   * them; their values are kept in memory for every id, so any sort and any
-   * range of rows needs no query.
+   * The query's SQL for these params. To give it an order, wrap the SELECT in
+   * `ordered(…)`: the ORDER BY is then part of the SQL, and the view keeps
+   * its rows in that order. Without it, rows are ordered by id.
    */
-  sortable?: Record<string, SortType>;
-  /** The sort when the client asks for none: "name" or "item_price:desc". Without it, by id. */
-  defaultSort?: string;
   build(params: P): Sql;
 }
 
@@ -65,18 +61,11 @@ const names = new Set<string>();
 /**
  * Registers a query. Throws if the name is taken, so two queries never share
  * views, if a related type has no link, so its changes can't be missed, if
- * a field is both filter and shown, if `via` is set on the query's own type,
- * or if the default sort is not a sortable column.
+ * a field is both filter and shown, or if `via` is set on the query's own type.
  */
 export function defineQuery<P>(def: QueryDefinition<P>): QueryDefinition<P> {
   if (names.has(def.name)) {
     throw new Error(`query ${def.name} is already defined`);
-  }
-  if (def.defaultSort !== undefined) {
-    const sort = parseSort(def.defaultSort, def.sortable ?? {});
-    if (typeof sort === 'string') {
-      throw new Error(`query ${def.name}: defaultSort: ${sort}`);
-    }
   }
   for (const [type, dep] of Object.entries(def.dependsOn)) {
     if (type !== def.entityType && dep.link === undefined) {
@@ -103,20 +92,6 @@ export function viaColumnsOf(def: QueryDefinition<unknown>): string[] {
   return Object.values(def.dependsOn).flatMap((dep) =>
     dep.via === undefined ? [] : [dep.via],
   );
-}
-
-/** The query's default sort, or undefined to sort by id. */
-export function defaultSortOf(
-  def: QueryDefinition<unknown>,
-): SortSpec | undefined {
-  if (def.defaultSort === undefined) {
-    return undefined;
-  }
-  const sort = parseSort(def.defaultSort, def.sortable ?? {});
-  if (typeof sort === 'string') {
-    throw new Error(`query ${def.name}: defaultSort: ${sort}`);
-  }
-  return sort;
 }
 
 /**

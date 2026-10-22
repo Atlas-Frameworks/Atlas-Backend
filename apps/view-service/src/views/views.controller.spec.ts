@@ -67,7 +67,7 @@ describe('ViewsController (observable)', () => {
         data: {
           viewKey: 'key',
           seq: 0,
-          sort: 'id',
+          orderBy: 'id',
           offset: 0,
           total: 1,
           rows: [{ id: 'a', version: 1, name: 'x' }],
@@ -107,7 +107,7 @@ describe('ViewsController (observable)', () => {
         type: 'window',
         id: '0',
         data: {
-          sort: 'id',
+          orderBy: 'id',
           offset: 0,
           total: 2,
           ids: ['a'],
@@ -209,7 +209,7 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
     );
     expect(stream.res.headers['content-type']).toContain('text/event-stream');
     expect(stream.body).toContain(
-      `data: {"viewKey":"${viewKey}","seq":0,"sort":"name:asc","offset":0,"total":1,"rows":[{"id":"order-1","version":2,"name":"n","item_type":"book","item_price":"10.00","item_id":"i-1"}]}`,
+      `data: {"viewKey":"${viewKey}","seq":0,"orderBy":"name asc","offset":0,"total":1,"rows":[{"id":"order-1","version":2,"name":"n","item_type":"book","item_price":"10.00","item_id":"i-1"}]}`,
     );
 
     const next = new Promise<string>((resolve) => {
@@ -241,10 +241,7 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
           closesAt: expect.any(String),
           listeners: 0,
           windows: [],
-          sortable: { name: 'text', item_type: 'text', item_price: 'number' },
-          defaultSort: 'name:asc',
-          // Built by the page the route returned.
-          sorts: ['name:asc'],
+          orderBy: 'name asc',
           dependsOn: {
             orders: { filter: ['item_id', 'customer_id'], shown: ['name'] },
             items: {
@@ -259,7 +256,7 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
     });
   });
 
-  it('shows the ids of a view in a sort order, from memory', async () => {
+  it('shows the ids of a view in the order of its SQL, from memory', async () => {
     db.query.mockResolvedValueOnce([
       {
         id: 'b',
@@ -287,30 +284,23 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
       },
     ]);
     const opened = await request(app.getHttpServer())
-      .get('/orders?type=sort-spec')
+      .get('/orders?type=sort-spec&orderBy=price')
       .expect(200);
-    const url = `/views/${opened.body.viewKey}/order`;
     const queries = db.query.mock.calls.length;
 
-    const byName = await request(app.getHttpServer()).get(url).expect(200);
-    const byPrice = await request(app.getHttpServer())
-      .get(`${url}?sort=item_price:desc`)
+    const res = await request(app.getHttpServer())
+      .get(`/views/${opened.body.viewKey}/order`)
       .expect(200);
 
-    expect(byName.body).toEqual({
-      sort: 'name:asc',
+    expect(res.body).toEqual({
+      orderBy: 'item_price desc, name asc',
       total: 3,
       order: [
-        { id: 'a', value: 'Book' },
-        { id: 'c', value: 'Cup' },
-        { id: 'b', value: 'Pen' },
+        { id: 'a', values: [100, 'Book'] },
+        { id: 'c', values: [25, 'Cup'] },
+        { id: 'b', values: [25, 'Pen'] },
       ],
     });
-    expect(byPrice.body.order).toEqual([
-      { id: 'a', value: 100 },
-      { id: 'b', value: 25 },
-      { id: 'c', value: 25 },
-    ]);
     expect(db.query.mock.calls.length).toBe(queries);
   });
 
@@ -320,13 +310,13 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
       .expect(200);
 
     const res = await request(app.getHttpServer())
-      .get(`/views/${opened.body.viewKey}/rows?sort=item_price:desc&limit=5`)
+      .get(`/views/${opened.body.viewKey}/rows?limit=5`)
       .expect(200);
 
     expect(res.body).toEqual({
       viewKey: opened.body.viewKey,
       seq: 0,
-      sort: 'item_price:desc',
+      orderBy: 'name asc',
       offset: 0,
       total: 1,
       rows: [expect.objectContaining({ id: 'order-1' })],
@@ -335,22 +325,6 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
       .get(`/views/${opened.body.viewKey}/rows?limit=0`)
       .expect(400);
     await request(app.getHttpServer()).get('/views/nope/rows').expect(404);
-  });
-
-  it('returns 400 INVALID_PARAM for a column that is not sortable', async () => {
-    const opened = await request(app.getHttpServer())
-      .get('/orders?type=book')
-      .expect(200);
-
-    const res = await request(app.getHttpServer())
-      .get(`/views/${opened.body.viewKey}/order?sort=customer_id`)
-      .expect(400);
-
-    expect(res.body).toEqual({
-      code: 'INVALID_PARAM',
-      message:
-        'cannot sort by customer_id; sortable: name, item_type, item_price',
-    });
   });
 
   it('returns 404 UNKNOWN_VIEW for a view that is not open', async () => {

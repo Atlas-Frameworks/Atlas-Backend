@@ -1,112 +1,169 @@
-import { compareBy, parseSort, SortKeys, type SortValue } from './sort-keys.js';
+import { asc, desc, type OrderKey } from './order.js';
+import { compareValues, SortKeys, type SortValue } from './sort-keys.js';
+import { SortedIndex } from './sorted-index.js';
 
-const sortable = { name: 'text', item_price: 'number' } as const;
-
-describe('parseSort', () => {
-  it('reads a column with an optional direction', () => {
-    expect(parseSort('name', sortable)).toEqual({ column: 'name', dir: 'asc' });
-    expect(parseSort('item_price:desc', sortable)).toEqual({
-      column: 'item_price',
-      dir: 'desc',
-    });
-  });
-
-  it('rejects an unknown column or direction', () => {
-    expect(parseSort('customer_id', sortable)).toBe(
-      'cannot sort by customer_id; sortable: name, item_price',
-    );
-    expect(parseSort('name:up', sortable)).toMatch(/asc\|desc/);
-    expect(parseSort('name:asc:x', sortable)).toMatch(/asc\|desc/);
-    expect(parseSort('toString', sortable)).toMatch(/cannot sort/);
-  });
+const row = (id: string, item_price: number | null, name = 'x') => ({
+  id,
+  version: 1,
+  item_price,
+  name,
 });
 
-describe('compareBy', () => {
-  /** Sorts [value, id] pairs and returns the ids in order. */
-  const order = (items: [SortValue, string][], dir: 'asc' | 'desc') =>
-    [...items]
-      .sort(([a, aId], [b, bId]) => compareBy(a, aId, b, bId, dir))
-      .map(([, id]) => id);
+/** Price ascending, then name: a 30, b 10, c 20, n null. */
+function keys(order: OrderKey[] = [asc('item_price', 'number')]): SortKeys {
+  const k = new SortKeys(order);
+  k.set(row('a', 30), true);
+  k.set(row('b', 10), true);
+  k.set(row('c', 20), true);
+  k.set(row('n', null), true);
+  return k;
+}
+const held = ['a', 'b', 'c', 'n'];
 
-  const items: [SortValue, string][] = [
-    [25, 'b'],
-    [null, 'n'],
-    [100, 'a'],
-    [25, 'a'],
-  ];
-
-  it('orders by value, then by id, with null last', () => {
-    expect(order(items, 'asc')).toEqual(['a', 'b', 'a', 'n']);
+describe('compareValues', () => {
+  it('puts null last in both directions', () => {
+    expect(compareValues(null, 1, 'asc')).toBe(1);
+    expect(compareValues(null, 1, 'desc')).toBe(1);
+    expect(compareValues(2, 1, 'desc')).toBe(-1);
   });
 
-  it('reverses the values, not the id tie-break or null, for desc', () => {
-    expect(order(items, 'desc')).toEqual(['a', 'a', 'b', 'n']);
-  });
-
-  it('compares text by code unit', () => {
-    expect(
-      order(
-        [
-          ['b', '1'],
-          ['B', '2'],
-          ['a', '3'],
-        ],
-        'asc',
-      ),
-    ).toEqual(['2', '3', '1']);
+  it('compares text by code unit, like COLLATE "C"', () => {
+    expect(compareValues('B', 'a', 'asc')).toBe(-1);
   });
 });
 
 describe('SortKeys', () => {
-  it('keeps only the sortable columns, as comparable values', () => {
-    const keys = new SortKeys({
-      item_price: 'number',
-      name: 'text',
-      created: 'time',
-    });
+  it('sorts the ids once, by every key and then the id', () => {
+    const k = new SortKeys([desc('item_price', 'number'), asc('name')]);
+    k.set(row('a', 10, 'Pen'), true);
+    k.set(row('b', 20, 'Cup'), true);
+    k.set(row('c', 10, 'Book'), true);
+    k.set(row('d', 10, 'Book'), true);
 
-    keys.set(
+    expect(k.sorted(['a', 'b', 'c', 'd']).ids).toEqual(['b', 'c', 'd', 'a']);
+  });
+
+  it('orders by id without an ORDER BY', () => {
+    const k = new SortKeys([]);
+    for (const id of ['c', 'a', 'b']) {
+      k.set(row(id, 1), true);
+    }
+
+    expect(k.sorted(['c', 'a', 'b']).ids).toEqual(['a', 'b', 'c']);
+  });
+
+  it('keeps only the ORDER BY columns, as comparable values', () => {
+    const k = new SortKeys([
+      asc('item_price', 'number'),
+      asc('created', 'time'),
+    ]);
+
+    k.set(
       {
         id: 'a',
         version: 1,
         item_price: '25.50',
-        name: 'Book',
         created: new Date('2026-10-21T10:00:00Z'),
-        customer_id: 'c',
+        name: 'Book',
       },
       true,
     );
 
-    expect(keys.get('item_price', 'a')).toBe(25.5);
-    expect(keys.get('name', 'a')).toBe('Book');
-    expect(keys.get('created', 'a')).toBe(Date.parse('2026-10-21T10:00:00Z'));
-    expect(keys.get('customer_id', 'a')).toBeUndefined();
+    expect(k.get('item_price', 'a')).toBe(25.5);
+    expect(k.get('created', 'a')).toBe(Date.parse('2026-10-21T10:00:00Z'));
+    expect(k.get('name', 'a')).toBeUndefined();
   });
 
-  it('keeps null for a null value', () => {
-    const keys = new SortKeys({ item_price: 'number' });
+  it('throws when the query does not select an ORDER BY column', () => {
+    const k = new SortKeys([asc('item_price', 'number')]);
 
-    keys.set({ id: 'a', version: 1, item_price: null }, true);
-
-    expect(keys.get('item_price', 'a')).toBeNull();
-  });
-
-  it('throws when the query does not select a sortable column', () => {
-    const keys = new SortKeys({ item_price: 'number' });
-
-    expect(() => keys.set({ id: 'a', version: 1 }, true)).toThrow(
-      'sortable column item_price is not selected by the query',
+    expect(() => k.set({ id: 'a', version: 1 }, true)).toThrow(
+      'order column item_price is not selected by the query',
     );
   });
 
-  it('forgets an id, or everything', () => {
-    const keys = new SortKeys({ item_price: 'number' });
-    keys.set({ id: 'a', version: 1, item_price: 1 }, true);
-    keys.set({ id: 'b', version: 1, item_price: 2 }, true);
+  it('puts a new id at its place', () => {
+    const k = keys();
+    const index = k.sorted(held);
 
-    keys.delete('a');
-    expect(keys.get('item_price', 'a')).toBeUndefined();
-    keys.clear();
-    expect(keys.get('item_price', 'b')).toBeUndefined();
+    k.set(row('d', 15), true);
+
+    expect(index.ids).toEqual(['b', 'd', 'c', 'a', 'n']);
+  });
+
+  it('moves an id whose ORDER BY value changed, not one whose other columns did', () => {
+    const k = keys();
+    const index = k.sorted(held);
+
+    k.set(row('a', 5), false);
+    expect(index.ids).toEqual(['a', 'b', 'c', 'n']);
+    k.set(row('c', 20, 'renamed'), false);
+    expect(index.ids).toEqual(['a', 'b', 'c', 'n']);
+  });
+
+  it('takes a deleted id out, and drops the index on clear', () => {
+    const k = keys();
+    const index = k.sorted(held);
+
+    k.delete('c');
+    expect(index.ids).toEqual(['b', 'a', 'n']);
+    k.clear();
+    expect(k.sorted([]).ids).toEqual([]);
+  });
+
+  it('still finds an id whose values changed without a remove first', () => {
+    const values = new Map([
+      ['a', 1],
+      ['b', 2],
+    ]);
+    const index = new SortedIndex(
+      (x, y) => values.get(x)! - values.get(y)!,
+      ['a', 'b'],
+    );
+
+    values.set('a', 9);
+    index.remove('a');
+
+    expect(index.ids).toEqual(['b']);
+  });
+
+  it('stays equal to a fresh sort after many random changes', () => {
+    let seed = 7;
+    const random = (n: number) => {
+      seed = (seed * 1103515245 + 12345) % 2 ** 31;
+      return seed % n;
+    };
+    const order = [desc('item_price', 'number'), asc('name')];
+    const k = new SortKeys(order);
+    const ids = new Set<string>();
+    const index = k.sorted(ids);
+    const values = new Map<string, [SortValue, SortValue]>();
+
+    for (let step = 0; step < 3000; step++) {
+      const id = `id-${random(200)}`;
+      if (random(4) === 0) {
+        k.delete(id);
+        ids.delete(id);
+        values.delete(id);
+      } else {
+        // Few distinct values, so ties (broken by name, then id) and nulls are common.
+        const price = random(10) === 0 ? null : random(8);
+        const name = ['a', 'B', 'c'][random(3)];
+        k.set(row(id, price, name), !ids.has(id));
+        ids.add(id);
+        values.set(id, [price, name]);
+      }
+    }
+
+    const fresh = [...ids].sort((a, b) => {
+      const [pa, na] = values.get(a)!;
+      const [pb, nb] = values.get(b)!;
+      return (
+        compareValues(pa, pb, 'desc') ||
+        compareValues(na, nb, 'asc') ||
+        (a < b ? -1 : 1)
+      );
+    });
+    expect(index.ids).toEqual(fresh);
   });
 });

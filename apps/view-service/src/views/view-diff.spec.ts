@@ -10,6 +10,7 @@ import {
   type Row,
 } from './view-diff.js';
 import { RefIndex } from './ref-index.js';
+import { asc } from './order.js';
 import { SortKeys } from './sort-keys.js';
 
 const row = (id: string, version: number, price = 10, item = 'i-1'): Row => ({
@@ -25,7 +26,7 @@ function held(): Membership {
   const view = {
     ids: new Map<string, number>(),
     rows: new Map<string, Row>(),
-    sortKeys: new SortKeys({ item_price: 'number' }),
+    sortKeys: new SortKeys([asc('item_price', 'number')]),
     refs: new RefIndex(['item_id']),
   };
   hold(view, row('a', 1));

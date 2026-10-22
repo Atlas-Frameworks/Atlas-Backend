@@ -6,7 +6,6 @@ import {
 } from '@nestjs/common';
 import { ChangeFeed } from '../changes/change-feed.js';
 import {
-  defaultSortOf,
   queryKey,
   viaColumnsOf,
   type QueryDefinition,
@@ -15,8 +14,7 @@ import { DependencyIndex } from './dependency-index.js';
 import { toStatement } from './sql.js';
 import { ViewLoader } from './view-loader.js';
 import { ViewRegistry } from './view-registry.js';
-import type { SortSpec } from './sort-keys.js';
-import { sortName } from './sorted-index.js';
+import { orderName, orderOf } from './order.js';
 import { LiveWindow, windowKey, type WindowData } from './live-window.js';
 import type { Row } from './view-diff.js';
 import type { View, ViewEvent, ViewListener } from './view.js';
@@ -27,22 +25,20 @@ import type { View, ViewEvent, ViewListener } from './view.js';
  */
 export const CLOSE_AFTER_MS = 60_000;
 
-/** Which rows to read: a sort, and a range of it. Every part is optional. */
+/** Which rows to read: a range of the query's order. Every part is optional. */
 export interface PageRequest {
-  /** Default: the view's default sort, or by id. */
-  sort?: SortSpec;
   /** Position of the first row, from 0. Default 0. */
   offset?: number;
   /** Default: every row from `offset` on. */
   limit?: number;
 }
 
-/** A range of a view's rows in one sort: what a route returns, and the first event of a stream. */
+/** A range of a view's rows, in the query's order: what a route returns, and the first event of a stream. */
 export interface ViewPage {
   viewKey: string;
   seq: number;
-  /** "column:dir", or "id". */
-  sort: string;
+  /** The query's ORDER BY, e.g. "item_price desc, name asc", or "id". */
+  orderBy: string;
   offset: number;
   /** Rows in the whole view, not only in this page. */
   total: number;
@@ -76,12 +72,12 @@ export class ViewService implements OnModuleDestroy {
     params: P,
     page: PageRequest = {},
   ): Promise<ViewPage> {
+    const built = query.build(params);
     const view = this.registry.open(
       queryKey(query.name, params),
       query.entityType,
-      toStatement(query.build(params)),
-      query.sortable,
-      defaultSortOf(query),
+      toStatement(built),
+      orderOf(built),
       viaColumnsOf(query),
     );
     this.cancelClose(view);
@@ -143,8 +139,7 @@ export class ViewService implements OnModuleDestroy {
 
   /** A range of the view's rows at its current seq, from memory: no query. */
   page(view: View, request: PageRequest): ViewPage {
-    const spec = request.sort ?? view.defaultSort;
-    const sorted = view.sorted(spec).ids;
+    const sorted = view.sorted();
     const offset = request.offset ?? 0;
     const ids = sorted.slice(
       offset,
@@ -153,7 +148,7 @@ export class ViewService implements OnModuleDestroy {
     return {
       viewKey: view.viewKey,
       seq: view.seq,
-      sort: sortName(spec),
+      orderBy: orderName(view.order),
       offset,
       total: sorted.length,
       rows: rowsOf(view, ids),
@@ -171,7 +166,7 @@ export class ViewService implements OnModuleDestroy {
 
   /**
    * Starts streaming one range of the view. The window is shared by every
-   * client on the same sort and range, and created by the first. `first` is
+   * client on the same range, and created by the first. `first` is
    * the first event: the window's ids at its current seq, with their rows.
    */
   openWindow(
@@ -179,13 +174,12 @@ export class ViewService implements OnModuleDestroy {
     request: PageRequest & { limit: number },
     listener: ViewListener,
   ): { window: LiveWindow; first: ViewEvent } {
-    const spec = request.sort ?? view.defaultSort;
     const offset = request.offset ?? 0;
-    const key = windowKey(spec, offset, request.limit);
+    const key = windowKey(offset, request.limit);
     let window = view.windows.get(key);
     if (!window) {
-      window = new LiveWindow(spec, offset, request.limit);
-      const sorted = view.sorted(spec).ids;
+      window = new LiveWindow(offset, request.limit);
+      const sorted = view.sorted();
       window.ids = sorted.slice(offset, offset + request.limit);
       window.total = sorted.length;
       view.windows.set(key, window);
@@ -196,6 +190,7 @@ export class ViewService implements OnModuleDestroy {
       type: 'window',
       seq: window.seq,
       data: windowData(
+        view,
         window,
         window.total,
         window.ids,
@@ -224,7 +219,7 @@ export class ViewService implements OnModuleDestroy {
    */
   publishWindows(view: View, changed: ReadonlySet<string>): void {
     for (const window of view.windows.values()) {
-      const sorted = view.sorted(window.spec).ids;
+      const sorted = view.sorted();
       const ids = sorted.slice(window.offset, window.offset + window.limit);
       const sent = new Set(window.ids);
       const send = ids.filter((id) => !sent.has(id) || changed.has(id));
@@ -239,7 +234,7 @@ export class ViewService implements OnModuleDestroy {
       const event: ViewEvent = {
         type: 'window',
         seq: window.nextSeq(),
-        data: windowData(window, window.total, ids, rowsOf(view, send)),
+        data: windowData(view, window, window.total, ids, rowsOf(view, send)),
       };
       for (const listener of window.listeners) {
         listener.send(event);
@@ -281,13 +276,14 @@ function rowsOf(view: View, ids: readonly string[]): Row[] {
 }
 
 function windowData(
+  view: View,
   window: LiveWindow,
   total: number,
   ids: string[],
   rows: Row[],
 ): WindowData {
   return {
-    sort: sortName(window.spec),
+    orderBy: orderName(view.order),
     offset: window.offset,
     total,
     ids,

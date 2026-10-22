@@ -9,7 +9,7 @@ import {
 } from './define-query.js';
 import { DependencyIndex } from './dependency-index.js';
 import type { WindowData } from './live-window.js';
-import { compareBy, type SortSpec } from './sort-keys.js';
+import { asc, desc, ordered } from './order.js';
 import {
   sql,
   toStatement,
@@ -33,6 +33,8 @@ import type { View, ViewEvent } from './view.js';
 interface Params {
   types?: string[];
   minPrice?: number;
+  /** Part of the SQL: by name (default), or price descending then name. */
+  orderBy?: 'name' | 'price';
 }
 
 const columns = sql`
@@ -54,8 +56,6 @@ function ordersQuery(
     name,
     entityType: 'orders',
     dependsOn,
-    sortable: { name: 'text', item_price: 'number' },
-    defaultSort: 'name',
     build: (p: Params) => {
       const where: Sql[] = [];
       if (p.types !== undefined) {
@@ -64,7 +64,12 @@ function ordersQuery(
       if (p.minPrice !== undefined) {
         where.push(sql`i.price >= ${p.minPrice}`);
       }
-      return sql`SELECT ${columns} FROM orders o JOIN items i ON i.id = o.item_id ${whereAll(where)}`;
+      return ordered(
+        sql`SELECT ${columns} FROM orders o JOIN items i ON i.id = o.item_id ${whereAll(where)}`,
+        ...(p.orderBy === 'price'
+          ? [desc('item_price', 'number'), asc('name')]
+          : [asc('name')]),
+      );
     },
   });
 }
@@ -302,18 +307,23 @@ interface Client {
   view: View;
   params: Params;
   /** Undefined: the whole view, from deltas. */
-  window?: { sort: SortSpec; offset: number; limit: number };
+  window?: { offset: number; limit: number };
   ids: string[];
   rows: Map<string, Row>;
 }
 
-function sortFresh(rows: Row[], spec: SortSpec): string[] {
-  const value = (row: Row) =>
-    spec.column === 'item_price'
-      ? Number(row.item_price)
-      : (row.name as string);
+/** The ids in the order Postgres returns for the query's ORDER BY (COLLATE "C", then id). */
+function sortFresh(rows: Row[], params: Params): string[] {
+  const byText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
   return [...rows]
-    .sort((a, b) => compareBy(value(a), a.id, value(b), b.id, spec.dir))
+    .sort(
+      (a, b) =>
+        (params.orderBy === 'price'
+          ? Number(b.item_price) - Number(a.item_price)
+          : 0) ||
+        byText(a.name as string, b.name as string) ||
+        byText(a.id, b.id),
+    )
     .map((row) => row.id);
 }
 
@@ -365,9 +375,9 @@ async function run(
 
   const clients: Client[] = [];
   for (const params of [
-    { types: ['book'] },
+    { types: ['book'], orderBy: 'price' },
     { minPrice: 60 },
-    {},
+    { orderBy: 'price' },
   ] as Params[]) {
     world.register(query, params);
     const opened = await views.open(query, params, { limit: 1 });
@@ -392,17 +402,9 @@ async function run(
     clients.push(whole);
 
     for (const window of [
-      {
-        sort: { column: 'item_price', dir: 'desc' } as const,
-        offset: 0,
-        limit: 8,
-      },
-      { sort: { column: 'name', dir: 'asc' } as const, offset: 5, limit: 10 },
-      {
-        sort: { column: 'item_price', dir: 'asc' } as const,
-        offset: 12,
-        limit: 6,
-      },
+      { offset: 0, limit: 8 },
+      { offset: 5, limit: 10 },
+      { offset: 12, limit: 6 },
     ]) {
       const client: Client = { view, params, window, ids: [], rows: new Map() };
       const apply = (event: ViewEvent) => {
@@ -461,12 +463,10 @@ async function run(
         }
         continue;
       }
-      const { sort, offset, limit } = client.window;
-      const sorted = sortFresh(fresh, sort);
-      if (
-        JSON.stringify(client.view.sorted(sort).ids) !== JSON.stringify(sorted)
-      ) {
-        return `${where}: the sort ${sort.column}:${sort.dir} differs from a fresh sort`;
+      const { offset, limit } = client.window;
+      const sorted = sortFresh(fresh, client.params);
+      if (JSON.stringify(client.view.sorted()) !== JSON.stringify(sorted)) {
+        return `${where}: the view's order differs from the query's ORDER BY`;
       }
       const expected = sorted.slice(offset, offset + limit);
       if (JSON.stringify(client.ids) !== JSON.stringify(expected)) {

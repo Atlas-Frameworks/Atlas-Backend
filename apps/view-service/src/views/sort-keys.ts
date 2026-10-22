@@ -1,164 +1,124 @@
-import { SortedIndex, sortName } from './sorted-index.js';
+import type { OrderKey, SortType } from './order.js';
+import { SortedIndex } from './sorted-index.js';
 import type { Row } from './view-diff.js';
-
-/**
- * How a sortable column compares. Postgres returns `numeric` as a string, so
- * the type is declared: as text, "100" would sort before "25".
- */
-export type SortType = 'text' | 'number' | 'time';
 
 /** A column's value, ready to compare. Null sorts last. */
 export type SortValue = string | number | null;
 
-export interface SortSpec {
-  column: string;
-  dir: 'asc' | 'desc';
-}
-
 /**
- * Parses "item_price:desc" or "name" (ascending). Returns an error message
- * for an unknown column or direction.
+ * Compares one ORDER BY key. Null is last in both directions, as NULLS LAST
+ * in the SQL. Text compares by UTF-16 code unit, which matches COLLATE "C"
+ * except for characters beyond U+FFFF.
  */
-export function parseSort(
-  spec: string,
-  sortable: Readonly<Record<string, SortType>>,
-): SortSpec | string {
-  const [column, dir = 'asc', ...rest] = spec.split(':');
-  if (rest.length > 0 || (dir !== 'asc' && dir !== 'desc')) {
-    return `sort must be <column> or <column>:asc|desc, got ${spec}`;
-  }
-  if (!Object.hasOwn(sortable, column)) {
-    const allowed = Object.keys(sortable).join(', ') || 'none';
-    return `cannot sort by ${column}; sortable: ${allowed}`;
-  }
-  return { column, dir };
-}
-
-/**
- * Orders two ids by a column, then by id, so ties never swap places between
- * ticks. Text compares by UTF-16 code unit (like Postgres COLLATE "C"), fast
- * and the same on every worker. Null is last in both directions.
- */
-export function compareBy(
+export function compareValues(
   a: SortValue,
-  aId: string,
   b: SortValue,
-  bId: string,
-  dir: SortSpec['dir'],
+  dir: OrderKey['dir'],
 ): number {
-  if (a !== b) {
-    if (a === null) {
-      return 1;
-    }
-    if (b === null) {
-      return -1;
-    }
-    const order = a < b ? -1 : 1;
-    return dir === 'asc' ? order : -order;
+  if (a === b) {
+    return 0;
   }
-  return aId < bId ? -1 : aId > bId ? 1 : 0;
+  if (a === null) {
+    return 1;
+  }
+  if (b === null) {
+    return -1;
+  }
+  const order = a < b ? -1 : 1;
+  return dir === 'asc' ? order : -order;
 }
 
 /**
- * The sortable columns' values of every id a view holds, and the sorted
- * indexes built from them. Only these columns of a row are kept. Each index
+ * The ORDER BY columns' values of every id a view holds, and the index of
+ * the ids in that order. Only these columns of a row are kept here. The index
  * is built on first use and then kept in order by `set` and `delete`.
  */
 export class SortKeys {
   /** column → id → value. */
   private readonly columns = new Map<string, Map<string, SortValue>>();
-  /** sort name → index. At most two per sortable column plus one by id. */
-  private readonly indexes = new Map<string, SortedIndex>();
+  private index: SortedIndex | undefined;
 
-  constructor(readonly types: Readonly<Record<string, SortType>>) {
-    for (const column of Object.keys(types)) {
-      this.columns.set(column, new Map());
+  constructor(readonly order: readonly OrderKey[]) {
+    for (const key of order) {
+      this.columns.set(key.column, new Map());
     }
   }
 
-  /**
-   * The ids sorted by `spec`, by id when undefined. Built from `ids` (every
-   * id held) on first use.
-   */
-  index(spec: SortSpec | undefined, ids: Iterable<string>): SortedIndex {
-    const name = sortName(spec);
-    let index = this.indexes.get(name);
-    if (!index) {
-      const column = spec?.column;
-      index = new SortedIndex(
-        spec,
-        (id) => (column === undefined ? null : (this.get(column, id) ?? null)),
-        ids,
-      );
-      this.indexes.set(name, index);
-    }
-    return index;
-  }
-
-  /** The sorts built so far (for debugging). */
-  indexNames(): string[] {
-    return [...this.indexes.keys()];
+  /** The held ids in order. Built from `ids` (every id held) on first use. */
+  sorted(ids: Iterable<string>): SortedIndex {
+    this.index ??= new SortedIndex((a, b) => this.compare(a, b), ids);
+    return this.index;
   }
 
   /**
-   * Keeps the row's sortable values, and moves it in every index whose
-   * column changed (`isNew`: adds it to every index). Throws if the SQL
-   * doesn't select a sortable column.
+   * Keeps the row's order values, and moves it in the index if one changed
+   * (`isNew`: adds it). Throws if the SQL doesn't select an ORDER BY column.
    */
   set(row: Row, isNew: boolean): void {
-    const changed = new Set<string>();
-    for (const [column, values] of this.columns) {
-      if (!(column in row)) {
+    let moved = isNew;
+    const next = new Map<string, SortValue>();
+    for (const key of this.order) {
+      if (!(key.column in row)) {
         throw new Error(
-          `sortable column ${column} is not selected by the query`,
+          `order column ${key.column} is not selected by the query`,
         );
       }
-      const value = toSortValue(this.types[column], row[column]);
-      if (!isNew && values.get(row.id) !== value) {
-        changed.add(column);
+      const value = toSortValue(key.type, row[key.column]);
+      next.set(key.column, value);
+      if (!isNew && this.columns.get(key.column)!.get(row.id) !== value) {
+        moved = true;
       }
     }
-    const moved = [...this.indexes.values()].filter((index) =>
-      isNew ? true : index.spec !== undefined && changed.has(index.spec.column),
-    );
-    // Out before the value changes: remove finds the id by its old value.
-    if (!isNew) {
-      for (const index of moved) {
-        index.remove(row.id);
-      }
+    // Out before the values change: remove finds the id by its old values.
+    if (moved && !isNew) {
+      this.index?.remove(row.id);
     }
-    for (const [column, values] of this.columns) {
-      values.set(row.id, toSortValue(this.types[column], row[column]));
+    for (const [column, value] of next) {
+      this.columns.get(column)!.set(row.id, value);
     }
-    for (const index of moved) {
-      index.insert(row.id);
+    if (moved) {
+      this.index?.insert(row.id);
     }
   }
 
   delete(id: string): void {
-    for (const index of this.indexes.values()) {
-      index.remove(id);
-    }
+    this.index?.remove(id);
     for (const values of this.columns.values()) {
       values.delete(id);
     }
   }
 
-  /** Forgets every value, and drops the indexes: they are built again on next use. */
+  /** Forgets every value, and drops the index: it is built again on next use. */
   clear(): void {
     for (const values of this.columns.values()) {
       values.clear();
     }
-    this.indexes.clear();
+    this.index = undefined;
   }
 
   /** The column's value for an id; undefined if the id or column isn't held. */
   get(column: string, id: string): SortValue | undefined {
     return this.columns.get(column)?.get(id);
   }
+
+  /** Orders two held ids like the query's ORDER BY: each key, then the id. */
+  compare(a: string, b: string): number {
+    for (const key of this.order) {
+      const values = this.columns.get(key.column)!;
+      const c = compareValues(
+        values.get(a) ?? null,
+        values.get(b) ?? null,
+        key.dir,
+      );
+      if (c !== 0) {
+        return c;
+      }
+    }
+    return a < b ? -1 : a > b ? 1 : 0;
+  }
 }
 
-function toSortValue(type: SortType | undefined, raw: unknown): SortValue {
+function toSortValue(type: SortType, raw: unknown): SortValue {
   if (raw === null || raw === undefined) {
     return null;
   }

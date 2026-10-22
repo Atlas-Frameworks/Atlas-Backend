@@ -1,5 +1,6 @@
 import type { DbService } from '../db/db.service.js';
 import { View } from './view.js';
+import { asc } from './order.js';
 import { sql } from './sql.js';
 import { recheckStatement, ViewLoader } from './view-loader.js';
 
@@ -40,9 +41,9 @@ describe('ViewLoader', () => {
       ]),
     };
     const loader = new ViewLoader(db as unknown as DbService);
-    const view = new View('key', 'orders', statement, {
-      item_price: 'number',
-    });
+    const view = new View('key', 'orders', statement, [
+      asc('item_price', 'number'),
+    ]);
 
     await loader.ensureLoaded(view);
 
@@ -53,10 +54,10 @@ describe('ViewLoader', () => {
   it('fails the load when the query does not select a sortable column', async () => {
     const db = { query: vi.fn(async () => [{ id: 'a', version: '1' }]) };
     const loader = new ViewLoader(db as unknown as DbService);
-    const view = new View('key', 'orders', statement, { name: 'text' });
+    const view = new View('key', 'orders', statement, [asc('name')]);
 
     await expect(loader.ensureLoaded(view)).rejects.toThrow(
-      'sortable column name is not selected by the query',
+      'order column name is not selected by the query',
     );
     expect(view.loaded).toBe(false);
   });

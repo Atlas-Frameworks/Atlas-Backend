@@ -1,5 +1,5 @@
-import { SortKeys, type SortSpec, type SortType } from './sort-keys.js';
-import type { SortedIndex } from './sorted-index.js';
+import type { OrderKey } from './order.js';
+import { SortKeys } from './sort-keys.js';
 import type { LiveWindow } from './live-window.js';
 import { RefIndex } from './ref-index.js';
 import type { SqlStatement } from './sql.js';
@@ -53,22 +53,26 @@ export class View implements Membership {
     readonly entityType: string,
     /** The full query: returns id, version and the columns sent to clients. */
     readonly statement: SqlStatement,
-    sortable: Readonly<Record<string, SortType>> = {},
-    /** The sort when a client asks for none; undefined: by id. */
-    readonly defaultSort?: SortSpec,
+    /** The query's ORDER BY; empty: by id. */
+    order: readonly OrderKey[] = [],
     /** Columns holding related ids, from the dependencies' `via`. */
     via: readonly string[] = [],
   ) {
-    this.sortKeys = new SortKeys(sortable);
+    this.sortKeys = new SortKeys(order);
     this.refs = new RefIndex(via);
   }
 
+  /** The query's ORDER BY. */
+  get order(): readonly OrderKey[] {
+    return this.sortKeys.order;
+  }
+
   /**
-   * The held ids in this sort (by id when undefined). Built from memory on
-   * first use, then kept in order as the view changes.
+   * The held ids in the query's order. Built from memory on first use, then
+   * kept in order as the view changes. Read it at once: it changes with the view.
    */
-  sorted(spec: SortSpec | undefined): SortedIndex {
-    return this.sortKeys.index(spec, this.ids.keys());
+  sorted(): readonly string[] {
+    return this.sortKeys.sorted(this.ids.keys()).ids;
   }
 
   /** True while any client streams the view, whole or a range of it. */

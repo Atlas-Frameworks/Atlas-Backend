@@ -1,3 +1,4 @@
+import { asc } from './order.js';
 import type { ChangeFeed } from '../changes/change-feed.js';
 import { DependencyIndex } from './dependency-index.js';
 import type { WindowData } from './live-window.js';
@@ -26,13 +27,9 @@ function setup() {
     {} as ChangeFeed,
   );
   vi.spyOn(service['logger'], 'error').mockImplementation(() => undefined);
-  const view = registry.open(
-    'key',
-    'orders',
-    { text: 'SELECT', values: [] },
-    { price: 'number' },
-    { column: 'price', dir: 'asc' },
-  );
+  const view = registry.open('key', 'orders', { text: 'SELECT', values: [] }, [
+    asc('price', 'number'),
+  ]);
   view.loaded = true;
 
   /** Writes a row to the fake Postgres and the view; returns it as the tick would. */
@@ -92,7 +89,7 @@ describe('live windows', () => {
       type: 'window',
       seq: 0,
       data: {
-        sort: 'price:asc',
+        orderBy: 'price asc',
         offset: 1,
         total: 5,
         ids: ['b', 'c'],
@@ -256,8 +253,8 @@ describe('live windows', () => {
         }
         client.seen = client.events.length;
         const expected = view
-          .sorted(view.defaultSort)
-          .ids.slice(client.offset, client.offset + client.limit);
+          .sorted()
+          .slice(client.offset, client.offset + client.limit);
         expect(client.shown.ids).toEqual(expected);
         for (const id of expected) {
           expect(client.shown.rows.get(id)).toEqual(db.get(id));

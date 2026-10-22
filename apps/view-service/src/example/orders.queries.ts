@@ -1,4 +1,5 @@
 import { defineQuery, type Dependency } from '../views/define-query.js';
+import { asc, desc, ordered } from '../views/order.js';
 import { empty, sql, whereAll, type Sql } from '../views/sql.js';
 
 /** The order ids that use these items. */
@@ -41,17 +42,21 @@ const orderColumns = sql`
   o.id, o.version, o.name, o.customer_id, o.item_id,
   i.type AS item_type, i.price AS item_price`;
 
-/** Both queries sort by name unless the client asks for another column. */
-const orderSorting = {
-  sortable: { name: 'text', item_type: 'text', item_price: 'number' },
-  defaultSort: 'name',
-} as const;
+/** The orders the routes offer: by name, or the most expensive item first. */
+export const ORDER_BY = ['name', 'price'] as const;
+
+const orderBy = {
+  name: [asc('name')],
+  price: [desc('item_price', 'number'), asc('name')],
+};
 
 export interface OrdersSearchParams {
   types?: string[];
   minPrice?: number;
   maxPrice?: number;
   customerId?: string;
+  /** Part of the SQL, so each order is its own view. Default: name. */
+  orderBy?: (typeof ORDER_BY)[number];
 }
 
 /** Orders, filtered by any mix of item type, item price and customer. */
@@ -59,7 +64,6 @@ export const ordersSearch = defineQuery({
   name: 'orders-search',
   entityType: 'orders',
   dependsOn: ordersSearchDependsOn,
-  ...orderSorting,
   build: (p: OrdersSearchParams) => {
     const where: Sql[] = [];
     if (p.types !== undefined) {
@@ -74,11 +78,14 @@ export const ordersSearch = defineQuery({
     if (p.customerId !== undefined) {
       where.push(sql`o.customer_id = ${p.customerId}`);
     }
-    return sql`
-      SELECT ${orderColumns}
-      FROM orders o
-      JOIN items i ON i.id = o.item_id
-      ${whereAll(where)}`;
+    return ordered(
+      sql`
+        SELECT ${orderColumns}
+        FROM orders o
+        JOIN items i ON i.id = o.item_id
+        ${whereAll(where)}`,
+      ...orderBy[p.orderBy ?? 'name'],
+    );
   },
 });
 
@@ -87,16 +94,19 @@ export interface CustomerOrdersParams {
   types?: string[];
 }
 
-/** One customer's orders, optionally only some item types. */
+/** One customer's orders by name, optionally only some item types. */
 export const customerOrders = defineQuery({
   name: 'customer-orders',
   entityType: 'orders',
   dependsOn: customerOrdersDependsOn,
-  ...orderSorting,
-  build: (p: CustomerOrdersParams) => sql`
-    SELECT ${orderColumns}
-    FROM orders o
-    JOIN items i ON i.id = o.item_id
-    WHERE o.customer_id = ${p.customerId}
-    ${p.types !== undefined ? sql`AND i.type = ANY(${p.types})` : empty}`,
+  build: (p: CustomerOrdersParams) =>
+    ordered(
+      sql`
+        SELECT ${orderColumns}
+        FROM orders o
+        JOIN items i ON i.id = o.item_id
+        WHERE o.customer_id = ${p.customerId}
+        ${p.types !== undefined ? sql`AND i.type = ANY(${p.types})` : empty}`,
+      asc('name'),
+    ),
 });

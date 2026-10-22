@@ -1,5 +1,4 @@
 import { BadRequestException } from '@nestjs/common';
-import { parseSort, type SortSpec, type SortType } from '../views/sort-keys.js';
 import type { PageRequest } from '../views/view.service.js';
 
 // Turns raw HTTP query-string values into typed, optional params for views.
@@ -50,37 +49,35 @@ export function optionalInteger(
 }
 
 /**
- * ?sort=item_price:desc&offset=7&limit=20 — which rows of a view to return.
- * Every part is optional; without limit, every row from offset on.
+ * ?offset=7&limit=20 — which range of a view's rows to return, in the
+ * query's order. Both are optional; without limit, every row from offset on.
  */
-export function pageRequest(
-  sortable: Readonly<Record<string, SortType>> | undefined,
-  query: { sort?: unknown; offset?: unknown; limit?: unknown },
-): PageRequest {
+export function pageRequest(query: {
+  offset?: unknown;
+  limit?: unknown;
+}): PageRequest {
   return {
-    sort: optionalSort('sort', query.sort, sortable ?? {}),
     offset: optionalInteger('offset', query.offset, 0),
     limit: optionalInteger('limit', query.limit, 1),
   };
 }
 
-/** "?sort=item_price:desc" → a sort on one of the view's sortable columns. */
-export function optionalSort(
+/** "?orderBy=price" → one of the allowed values. */
+export function optionalOneOf<T extends string>(
   name: string,
   raw: unknown,
-  sortable: Readonly<Record<string, SortType>>,
-): SortSpec | undefined {
+  allowed: readonly T[],
+): T | undefined {
   if (isUnset(raw)) {
     return undefined;
   }
-  if (typeof raw !== 'string') {
-    invalid(`${name} must be given once`);
+  if (
+    typeof raw !== 'string' ||
+    !(allowed as readonly string[]).includes(raw)
+  ) {
+    invalid(`${name} must be one of: ${allowed.join(', ')}`);
   }
-  const sort = parseSort(raw, sortable);
-  if (typeof sort === 'string') {
-    invalid(sort);
-  }
-  return sort;
+  return raw as T;
 }
 
 /** "?type=a" → ['a'], "?type=a&type=b" → ['a', 'b']. */

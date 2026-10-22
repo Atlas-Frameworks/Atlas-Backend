@@ -102,8 +102,7 @@ function setup() {
       key,
       'orders',
       toStatement(sql`SELECT o.id, o.version FROM orders o`),
-      {},
-      undefined,
+      [],
       via,
     );
     dependencies.add(key, 'orders', deps);
@@ -216,7 +215,7 @@ describe('TickService', () => {
         type: 'window',
         seq: 1,
         data: {
-          sort: 'id',
+          orderBy: 'id',
           offset: 0,
           total: 3,
           ids: ['a', 'b'],

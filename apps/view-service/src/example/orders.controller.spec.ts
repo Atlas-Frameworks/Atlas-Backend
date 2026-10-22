@@ -52,7 +52,7 @@ describe('example OrdersController', () => {
   type Stmt = { text: string; values: unknown[] };
   const isRowFetch = (stmt: Stmt) => stmt.text.startsWith('SELECT q.*');
 
-  /** The last full query a view ran (not the rows read by id for a snapshot). */
+  /** The last full query a view ran (not a re-check by id). */
   function lastSql(): Stmt {
     return db.query.mock.calls
       .map(([stmt]) => stmt as Stmt)
@@ -68,7 +68,7 @@ describe('example OrdersController', () => {
     expect(res.body).toEqual({
       viewKey: expect.stringMatching(/^[0-9a-f]{32}$/),
       seq: 0,
-      sort: 'name:asc',
+      orderBy: 'name asc',
       offset: 0,
       total: 2,
       rows: [
@@ -91,7 +91,7 @@ describe('example OrdersController', () => {
       ],
     });
     expect(lastSql().text).toMatch(
-      /WHERE i\.type = ANY\(\$1\) AND i\.price >= \$2$/,
+      /WHERE i\.type = ANY\(\$1\) AND i\.price >= \$2\) q ORDER BY q\."name" COLLATE "C" ASC NULLS LAST, q\.id$/,
     );
     expect(lastSql().values).toEqual([['book'], 100]);
   });
@@ -135,7 +135,7 @@ describe('example OrdersController', () => {
       .expect(200);
 
     expect(lastSql().text).toMatch(
-      /WHERE o\.customer_id = \$1\s+AND i\.type = ANY\(\$2\)$/,
+      /WHERE o\.customer_id = \$1\s+AND i\.type = ANY\(\$2\)\) q ORDER BY/,
     );
     expect(lastSql().values).toEqual([customerId, ['food', 'book']]);
   });
@@ -168,14 +168,14 @@ describe('example OrdersController', () => {
     );
   });
 
-  it('returns any page of rows, all from one view loaded once', async () => {
+  it('returns any range of rows, all from one view loaded once', async () => {
     db.query.mockImplementation((stmt: Stmt) =>
       Promise.resolve(
         [
-          { id: 'o-a', name: 'A' },
-          { id: 'o-b', name: 'B' },
-          { id: 'o-c', name: 'C' },
-          { id: 'o-d', name: 'D' },
+          { id: 'o-a', name: 'A', item_price: '1.00' },
+          { id: 'o-b', name: 'B', item_price: '3.00' },
+          { id: 'o-c', name: 'C', item_price: '2.00' },
+          { id: 'o-d', name: 'D', item_price: '4.00' },
         ]
           .filter(
             (row) =>
@@ -186,7 +186,6 @@ describe('example OrdersController', () => {
             ...row,
             version: '1',
             item_type: 'book',
-            item_price: '1.00',
             item_id: 'i-1',
           })),
       ),
@@ -199,25 +198,59 @@ describe('example OrdersController', () => {
     const middle = await request(server).get(
       '/orders?type=book&offset=1&limit=2',
     );
-    const all = await request(server).get('/orders?type=book&sort=name:desc');
+    const all = await request(server).get('/orders?type=book');
 
     expect(names(first)).toEqual(['A', 'B']);
     expect(names(middle)).toEqual(['B', 'C']);
     expect(middle.body).toMatchObject({ offset: 1, total: 4 });
-    expect(names(all)).toEqual(['D', 'C', 'B', 'A']);
+    expect(names(all)).toEqual(['A', 'B', 'C', 'D']);
     expect(new Set([first, middle, all].map((r) => r.body.viewKey)).size).toBe(
       1,
     );
-    // The load only: every page is cut from memory, rows included.
+    // The load only: every range is cut from memory, rows included.
     expect(db.query).toHaveBeenCalledTimes(1);
   });
 
+  it('opens another view for another ORDER BY, which is part of the SQL', async () => {
+    db.query.mockImplementation(() =>
+      Promise.resolve(
+        [
+          ['o-a', 'A', '1.00'],
+          ['o-b', 'B', '3.00'],
+          ['o-c', 'C', '3.00'],
+        ].map(([id, name, price]) => ({
+          id,
+          version: '1',
+          name,
+          item_type: 'book',
+          item_price: price,
+          item_id: 'i-1',
+        })),
+      ),
+    );
+    const server = app.getHttpServer();
+
+    const byName = await request(server).get('/orders?type=book');
+    const byPrice = await request(server).get(
+      '/orders?type=book&orderBy=price&offset=1',
+    );
+
+    expect(byPrice.body.viewKey).not.toBe(byName.body.viewKey);
+    expect(byPrice.body).toMatchObject({
+      orderBy: 'item_price desc, name asc',
+      offset: 1,
+      total: 3,
+    });
+    expect(
+      (byPrice.body as { rows: { name: string }[] }).rows.map((r) => r.name),
+    ).toEqual(['C', 'A']);
+    expect(lastSql().text).toMatch(
+      /\) q ORDER BY q\."item_price" DESC NULLS LAST, q\."name" COLLATE "C" ASC NULLS LAST, q\.id$/,
+    );
+  });
+
   it.each([
-    [
-      'sort=customer_id',
-      'cannot sort by customer_id; sortable: name, item_type, item_price',
-    ],
-    ['sort=name:up', 'sort must be <column> or <column>:asc|desc, got name:up'],
+    ['orderBy=cheapest', 'orderBy must be one of: name, price'],
     ['offset=-1', 'offset must be a whole number of at least 0'],
     ['limit=0', 'limit must be a whole number of at least 1'],
     ['limit=2.5', 'limit must be a whole number of at least 1'],

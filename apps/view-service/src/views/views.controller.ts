@@ -11,9 +11,9 @@ import {
 import { interval, map, merge, Observable } from 'rxjs';
 import type { Dependency } from './define-query.js';
 import { DependencyIndex } from './dependency-index.js';
-import { optionalSort, pageRequest } from '../http/query-params.js';
-import type { SortType, SortValue } from './sort-keys.js';
-import { sortName } from './sorted-index.js';
+import { pageRequest } from '../http/query-params.js';
+import { orderName } from './order.js';
+import type { SortValue } from './sort-keys.js';
 import { toStatement } from './sql.js';
 import { ViewRegistry } from './view-registry.js';
 import { ViewService, type ViewPage } from './view.service.js';
@@ -48,15 +48,12 @@ export class ViewsController {
             : new Date(view.closesAt).toISOString(),
         listeners: view.listeners.size,
         windows: [...view.windows.values()].map((window) => ({
-          sort: sortName(window.spec),
           offset: window.offset,
           limit: window.limit,
           listeners: window.listeners.size,
           seq: window.seq,
         })),
-        sortable: view.sortKeys.types,
-        defaultSort: view.defaultSort ? sortName(view.defaultSort) : null,
-        sorts: view.sortKeys.indexNames(),
+        orderBy: orderName(view.order),
         dependsOn: describe(this.dependencies.dependenciesOf(view.viewKey)),
       })),
     };
@@ -68,9 +65,9 @@ export class ViewsController {
    *
    * Every first event is answered from the view's memory, with no query.
    *
-   * - Without limit (?sort= optional): a `snapshot` of every row, then a
+   * - Without limit: a `snapshot` of every row in the query's order, then a
    *   `delta` per tick with the rows added, updated and removed.
-   * - With limit (?sort=item_price:desc&offset=7&limit=20): a `window` with
+   * - With limit (?offset=7&limit=20): a `window` with
    *   that range's ids and rows, then a `window` whenever the range changes,
    *   with its ids in order and only the rows new to it or changed. A range
    *   has its own seq. To move it, connect again with the new offset.
@@ -81,7 +78,7 @@ export class ViewsController {
     @Query() query: Record<string, unknown>,
   ): Observable<MessageEvent> {
     const view = this.loadedView(key);
-    const request = pageRequest(view.sortKeys.types, query);
+    const request = pageRequest(query);
     const { limit } = request;
     if (limit === undefined && request.offset !== undefined) {
       throw new BadRequestException({
@@ -116,7 +113,7 @@ export class ViewsController {
   }
 
   /**
-   * GET /views/:viewKey/rows?sort=item_price:desc&offset=7&limit=20 — a page
+   * GET /views/:viewKey/rows?offset=7&limit=20 — a page, in the query's order,
    * of a view a client already opened, e.g. a second list in the client on
    * the same data. Every param is optional; no limit: every row.
    */
@@ -126,29 +123,23 @@ export class ViewsController {
     @Query() query: Record<string, unknown>,
   ): ViewPage {
     const view = this.loadedView(key);
-    return this.views.read(view, pageRequest(view.sortKeys.types, query));
+    return this.views.read(view, pageRequest(query));
   }
 
   /**
-   * GET /views/:viewKey/order?sort=item_price:desc — debug: the view's ids in
-   * a sort order with their sort value, read from memory. No sort: the view's
-   * default sort.
+   * GET /views/:viewKey/order — debug: the view's ids in the query's order,
+   * with their ORDER BY values, read from memory.
    */
   @Get(':viewKey/order')
-  order(
-    @Param('viewKey') key: string,
-    @Query('sort') sort?: string,
-  ): OrderDebug {
+  order(@Param('viewKey') key: string): OrderDebug {
     const view = this.loadedView(key);
-    const spec =
-      optionalSort('sort', sort, view.sortKeys.types) ?? view.defaultSort;
-    const { ids } = view.sorted(spec);
+    const ids = view.sorted();
     return {
-      sort: sortName(spec),
+      orderBy: orderName(view.order),
       total: ids.length,
       order: ids.map((id) => ({
         id,
-        value: spec ? (view.sortKeys.get(spec.column, id) ?? null) : id,
+        values: view.order.map((k) => view.sortKeys.get(k.column, id) ?? null),
       })),
     };
   }
@@ -166,10 +157,11 @@ export class ViewsController {
 }
 
 export interface OrderDebug {
-  /** "column:dir", or "id". */
-  sort: string;
+  /** The query's ORDER BY, or "id". */
+  orderBy: string;
   total: number;
-  order: { id: string; value: SortValue }[];
+  /** Ids in order, with their value for each ORDER BY column. */
+  order: { id: string; values: SortValue[] }[];
 }
 
 export interface ViewsDebug {
@@ -186,17 +178,13 @@ export interface ViewsDebug {
     listeners: number;
     /** Live ranges, each with its own streams and seq. */
     windows: {
-      sort: string;
       offset: number;
       limit: number;
       listeners: number;
       seq: number;
     }[];
-    sortable: Readonly<Record<string, SortType>>;
-    /** "column:dir", or null when the view sorts by id. */
-    defaultSort: string | null;
-    /** Sorted indexes built so far. */
-    sorts: string[];
+    /** The query's ORDER BY, or "id". */
+    orderBy: string;
     dependsOn: Record<string, DependencyDebug>;
   }[];
 }
