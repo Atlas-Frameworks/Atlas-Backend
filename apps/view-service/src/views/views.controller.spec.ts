@@ -16,17 +16,13 @@ import { DependencyIndex } from './dependency-index.js';
 import type { ViewLoader } from './view-loader.js';
 import { ViewRegistry } from './view-registry.js';
 import { ViewService } from './view.service.js';
-import type { Row } from './view-diff.js';
+import { hold } from './view-diff.js';
 import { HEARTBEAT_MS, ViewsController } from './views.controller.js';
 
 describe('ViewsController (observable)', () => {
   function setup() {
     const registry = new ViewRegistry();
-    const loader = {
-      fetchByIds: vi.fn(() =>
-        Promise.resolve<Row[]>([{ id: 'a', version: 1, name: 'x' }]),
-      ),
-    };
+    const loader = { fetchByIds: vi.fn() };
     const service = new ViewService(
       registry,
       loader as unknown as ViewLoader,
@@ -39,7 +35,7 @@ describe('ViewsController (observable)', () => {
       new DependencyIndex(),
     );
     const view = registry.open('key', 'orders', { text: 'SELECT', values: [] });
-    view.ids.set('a', 1);
+    hold(view, { id: 'a', version: 1, name: 'x' });
     view.loaded = true;
     return { controller, service, view, loader };
   }
@@ -56,16 +52,14 @@ describe('ViewsController (observable)', () => {
     expect(() => controller.events('key', {})).toThrow(NotFoundException);
   });
 
-  it('sends a snapshot with rows first, then events published while the rows were read', async () => {
-    const { controller, service, view } = setup();
+  it('sends a snapshot with rows from memory first, then every published event', () => {
+    const { controller, service, view, loader } = setup();
     const got: MessageEvent[] = [];
 
     const sub = controller.events('key', {}).subscribe((m) => got.push(m));
     service.publish(view, 'test', { n: 1 });
-    expect(got).toEqual([]);
-
-    await vi.waitFor(() => expect(got).toHaveLength(2));
     service.publish(view, 'test', { n: 2 });
+
     expect(got).toEqual([
       {
         type: 'snapshot',
@@ -82,20 +76,8 @@ describe('ViewsController (observable)', () => {
       { type: 'test', id: '1', data: { n: 1 } },
       { type: 'test', id: '2', data: { n: 2 } },
     ]);
+    expect(loader.fetchByIds).not.toHaveBeenCalled();
     sub.unsubscribe();
-  });
-
-  it('ends the stream when the rows cannot be read', async () => {
-    const { controller, view, loader } = setup();
-    loader.fetchByIds.mockRejectedValueOnce(new Error('connection lost'));
-
-    const error = new Promise((resolve) =>
-      controller.events('key', {}).subscribe({ error: resolve }),
-    );
-
-    expect(await error).toEqual(new Error('connection lost'));
-    expect(view.listeners.size).toBe(0);
-    clearTimeout(view.closeTimer);
   });
 
   it('removes the listener when the client goes away, starting the close timer', () => {
@@ -112,14 +94,13 @@ describe('ViewsController (observable)', () => {
 
   it('streams one range when a limit is given: its window first, then its own events', async () => {
     const { controller, service, view } = setup();
-    view.ids.set('b', 1);
+    hold(view, { id: 'b', version: 1, name: 'y' });
     const got: MessageEvent[] = [];
 
     const sub = controller
       .events('key', { offset: '0', limit: '1' })
       .subscribe((m) => got.push(m));
     service.publish(view, 'delta', { n: 1 });
-    await vi.waitFor(() => expect(got).toHaveLength(1));
 
     expect(got).toEqual([
       {
@@ -172,6 +153,7 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
         name: 'n',
         item_type: 'book',
         item_price: '10.00',
+        item_id: 'i-1',
       },
     ]),
     onModuleDestroy: vi.fn(),
@@ -227,7 +209,7 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
     );
     expect(stream.res.headers['content-type']).toContain('text/event-stream');
     expect(stream.body).toContain(
-      `data: {"viewKey":"${viewKey}","seq":0,"sort":"name:asc","offset":0,"total":1,"rows":[{"id":"order-1","version":2,"name":"n","item_type":"book","item_price":"10.00"}]}`,
+      `data: {"viewKey":"${viewKey}","seq":0,"sort":"name:asc","offset":0,"total":1,"rows":[{"id":"order-1","version":2,"name":"n","item_type":"book","item_price":"10.00","item_id":"i-1"}]}`,
     );
 
     const next = new Promise<string>((resolve) => {
@@ -264,9 +246,11 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
           // Built by the page the route returned.
           sorts: ['name:asc'],
           dependsOn: {
-            orders: { fields: ['name', 'item_id', 'customer_id'] },
+            orders: { filter: ['item_id', 'customer_id'], shown: ['name'] },
             items: {
-              fields: ['type', 'price'],
+              filter: ['type', 'price'],
+              shown: [],
+              via: 'item_id',
               link: 'SELECT o.id FROM orders o WHERE o.item_id = ANY($1)',
             },
           },
@@ -283,6 +267,7 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
         name: 'Pen',
         item_type: 'office',
         item_price: '25.00',
+        item_id: 'i-1',
       },
       {
         id: 'a',
@@ -290,6 +275,7 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
         name: 'Book',
         item_type: 'book',
         item_price: '100.00',
+        item_id: 'i-1',
       },
       {
         id: 'c',
@@ -297,6 +283,7 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
         name: 'Cup',
         item_type: 'home',
         item_price: '25.00',
+        item_id: 'i-1',
       },
     ]);
     const opened = await request(app.getHttpServer())

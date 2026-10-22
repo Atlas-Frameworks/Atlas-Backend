@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DbService } from '../db/db.service.js';
 import type { Dependency } from './define-query.js';
 import { toStatement, type SqlStatement } from './sql.js';
-import { hold, type Row } from './view-diff.js';
+import { clearAll, hold, type Row } from './view-diff.js';
 import type { View } from './view.js';
 
 /** Runs a view's query in Postgres: in full, or for some ids only. */
@@ -49,9 +49,7 @@ export class ViewLoader {
 
   private async load(view: View): Promise<void> {
     const rows = await this.fetchAll(view);
-    view.ids.clear();
-    view.hashes.clear();
-    view.sortKeys.clear();
+    clearAll(view);
     for (const row of rows) {
       hold(view, row);
     }

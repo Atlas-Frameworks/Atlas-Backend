@@ -16,6 +16,7 @@ export interface ChangesDebug {
   /** Events waiting for the next tick, with the views each one may affect. */
   pending: (Pick<ChangeEvent, 'type' | 'id' | 'op' | 'version' | 'typeSeq'> & {
     fields: string[];
+    /** "<viewKey> (filter)" or "<viewKey> (shown)". */
     candidates: { own: string[]; linked: string[] };
   })[];
 }
@@ -47,7 +48,10 @@ export class ChangesDebugController {
           version: evt.version,
           typeSeq: evt.typeSeq,
           fields: Object.keys({ ...evt.changes?.old, ...evt.changes?.new }),
-          candidates: { own, linked: linked.map((c) => c.viewKey) },
+          candidates: {
+            own: own.map((c) => `${c.viewKey} (${c.level})`),
+            linked: linked.map((c) => `${c.viewKey} (${c.level})`),
+          },
         };
       }),
     };

@@ -10,11 +10,7 @@ import type { View, ViewEvent, ViewListener } from './view.js';
 
 function setup() {
   const registry = new ViewRegistry();
-  const loader = {
-    fetchByIds: vi.fn((_view: View, ids: string[]) =>
-      Promise.resolve(ids.map((id) => ({ id, version: 9, name: id }))),
-    ),
-  };
+  const loader = { fetchByIds: vi.fn() };
   const service = new ViewService(
     registry,
     loader as unknown as ViewLoader,
@@ -28,43 +24,29 @@ function setup() {
 }
 
 describe('ViewService', () => {
-  it('reads every row held at the current seq, by id by default', async () => {
+  it('answers a page from memory: every row held at the current seq, by id by default', () => {
     const { service, view, loader } = setup();
     view.nextSeq();
 
-    const page = service.page(view, {});
-    view.nextSeq();
-    hold(view, { id: 'c', version: 1 });
-
-    expect(await page).toEqual({
+    expect(service.page(view, {})).toEqual({
       viewKey: 'key',
       seq: 1,
       sort: 'id',
       offset: 0,
       total: 2,
       rows: [
-        { id: 'a', version: 9, name: 'a' },
-        { id: 'b', version: 9, name: 'b' },
+        { id: 'a', version: 1 },
+        { id: 'b', version: 2 },
       ],
     });
-    expect(loader.fetchByIds).toHaveBeenCalledWith(view, ['a', 'b']);
+    expect(loader.fetchByIds).not.toHaveBeenCalled();
   });
 
   describe('pages', () => {
     /** A view of 5 orders sorted by price: e 10, d 20, c 30, b 40, a 50. */
     function sorted() {
       const registry = new ViewRegistry();
-      const loader = {
-        // Like Postgres: rows in any order, and only the ids that still match.
-        fetchByIds: vi.fn((_view: View, ids: string[]) =>
-          Promise.resolve(
-            ids
-              .filter((id) => id !== 'gone')
-              .reverse()
-              .map((id) => ({ id, version: 1 })),
-          ),
-        ),
-      };
+      const loader = { fetchByIds: vi.fn() };
       const service = new ViewService(
         registry,
         loader as unknown as ViewLoader,
@@ -92,24 +74,28 @@ describe('ViewService', () => {
       return { service, view, loader, ids };
     }
 
-    it('cuts any range from the sort in memory, and reads only its rows', async () => {
+    it('cuts any range from the sort in memory, rows included: no query', () => {
       const { service, view, loader, ids } = sorted();
 
-      const page = await service.page(view, { offset: 1, limit: 3 });
+      const page = service.page(view, { offset: 1, limit: 3 });
 
       expect(page).toMatchObject({ sort: 'price:asc', offset: 1, total: 5 });
-      expect(ids(page)).toEqual(['d', 'c', 'b']);
-      expect(loader.fetchByIds).toHaveBeenLastCalledWith(view, ['d', 'c', 'b']);
-      expect(ids(await service.page(view, { offset: 3, limit: 3 }))).toEqual([
+      expect(page.rows).toEqual([
+        { id: 'd', version: 1, price: 20 },
+        { id: 'c', version: 1, price: 30 },
+        { id: 'b', version: 1, price: 40 },
+      ]);
+      expect(ids(service.page(view, { offset: 3, limit: 3 }))).toEqual([
         'b',
         'a',
       ]);
+      expect(loader.fetchByIds).not.toHaveBeenCalled();
     });
 
-    it('reads every row from offset on without a limit, in any sort', async () => {
+    it('reads every row from offset on without a limit, in any sort', () => {
       const { service, view, ids } = sorted();
 
-      const page = await service.page(view, {
+      const page = service.page(view, {
         sort: { column: 'price', dir: 'desc' },
         offset: 2,
       });
@@ -118,33 +104,22 @@ describe('ViewService', () => {
       expect(ids(page)).toEqual(['c', 'd', 'e']);
     });
 
-    it('returns no rows, without a query, past the end', async () => {
-      const { service, view, loader } = sorted();
+    it('returns no rows past the end', () => {
+      const { service, view } = sorted();
 
-      const page = await service.page(view, { offset: 9, limit: 3 });
-
-      expect(page).toMatchObject({ offset: 9, total: 5, rows: [] });
-      expect(loader.fetchByIds).toHaveBeenCalledWith(view, []);
-    });
-
-    it('leaves out a row that no longer matches when read', async () => {
-      const { service, view, ids } = sorted();
-      hold(view, { id: 'gone', version: 1, price: 15 });
-
-      const page = await service.page(view, { limit: 3 });
-
-      expect(page.total).toBe(6);
-      expect(ids(page)).toEqual(['e', 'd']);
-    });
-
-    it('answers a read of an open view with 503 RETRY when the rows cannot be read', async () => {
-      const { service, view, loader } = sorted();
-      vi.spyOn(service['logger'], 'error').mockImplementation(() => undefined);
-      loader.fetchByIds.mockRejectedValueOnce(new Error('connection lost'));
-
-      await expect(service.read(view, {})).rejects.toMatchObject({
-        response: { code: 'RETRY' },
+      expect(service.page(view, { offset: 9, limit: 3 })).toMatchObject({
+        offset: 9,
+        total: 5,
+        rows: [],
       });
+    });
+
+    it('restarts the close timer on a read of an open view', () => {
+      const { service, view } = sorted();
+
+      service.read(view, { limit: 1 });
+
+      expect(view.closesAt).toBeDefined();
       clearTimeout(view.closeTimer);
     });
   });
@@ -179,7 +154,7 @@ describe('ViewService closing views', () => {
     name: 'orders-close-spec',
     entityType: 'orders',
     dependsOn: {
-      items: { fields: ['type'], link: () => sql`SELECT 1` },
+      items: { filter: ['type'], link: () => sql`SELECT 1` },
     },
     build: (p) => sql`SELECT id, version FROM orders WHERE type = ${p.type}`,
   };

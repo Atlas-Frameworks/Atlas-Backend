@@ -1,4 +1,9 @@
-import { defaultSortOf, defineQuery, queryKey } from './define-query.js';
+import {
+  defaultSortOf,
+  defineQuery,
+  queryKey,
+  viaColumnsOf,
+} from './define-query.js';
 import { sql } from './sql.js';
 
 describe('defineQuery', () => {
@@ -6,7 +11,7 @@ describe('defineQuery', () => {
     const def = {
       name: 'spec-query',
       entityType: 'orders',
-      dependsOn: { orders: { fields: ['name'] } },
+      dependsOn: { orders: { filter: ['name'] } },
       build: () => sql`SELECT 1`,
     };
 
@@ -32,10 +37,45 @@ describe('defineQuery', () => {
       defineQuery({
         name: 'spec-no-link',
         entityType: 'orders',
-        dependsOn: { items: { fields: ['price'] } },
+        dependsOn: { items: { filter: ['price'] } },
         build: () => sql`SELECT 1`,
       }),
     ).toThrow('query spec-no-link: dependency items needs a link');
+  });
+
+  it('refuses a field that is both filter and shown', () => {
+    expect(() =>
+      defineQuery({
+        name: 'spec-both',
+        entityType: 'orders',
+        dependsOn: { orders: { filter: ['name'], shown: ['name', 'note'] } },
+        build: () => sql`SELECT 1`,
+      }),
+    ).toThrow('query spec-both: orders.name is both filter and shown');
+  });
+
+  it("refuses via on the query's own type, and lists the via columns", () => {
+    expect(() =>
+      defineQuery({
+        name: 'spec-own-via',
+        entityType: 'orders',
+        dependsOn: { orders: { via: 'id' } },
+        build: () => sql`SELECT 1`,
+      }),
+    ).toThrow('query spec-own-via: via is for related types, not orders');
+    expect(
+      viaColumnsOf(
+        defineQuery({
+          name: 'spec-via',
+          entityType: 'orders',
+          dependsOn: {
+            items: { via: 'item_id', link: () => sql`SELECT 1` },
+            customers: { link: () => sql`SELECT 1` },
+          },
+          build: () => sql`SELECT 1`,
+        }),
+      ),
+    ).toEqual(['item_id']);
   });
 
   it('refuses a default sort that is not a sortable column', () => {

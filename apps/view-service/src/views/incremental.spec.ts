@@ -43,11 +43,12 @@ const link = (ids: string[]) =>
 
 function ordersQuery(
   name: string,
-  orderFields: string[],
+  orders: Dependency,
+  items: Omit<Dependency, 'link'>,
 ): QueryDefinition<Params> {
   const dependsOn: Record<string, Dependency> = {
-    orders: { fields: orderFields },
-    items: { fields: ['type', 'price'], link },
+    orders,
+    items: { ...items, link },
   };
   return defineQuery({
     name,
@@ -68,16 +69,30 @@ function ordersQuery(
   });
 }
 
-const correct = ordersQuery('incremental-spec', [
-  'name',
-  'item_id',
-  'customer_id',
-]);
+/** The item's type and price are filtered on; the order's name and customer only shown. */
+const correct = ordersQuery(
+  'incremental-spec',
+  { filter: ['item_id'], shown: ['name', 'customer_id'] },
+  { filter: ['type', 'price'], via: 'item_id' },
+);
+/** The same without `via`: shown changes of items go through the link query. */
+const withoutVia = ordersQuery(
+  'incremental-spec-no-via',
+  { filter: ['item_id'], shown: ['name', 'customer_id'] },
+  { filter: ['type', 'price'] },
+);
 /** Shows `name` but doesn't declare it: name changes are never re-checked. */
-const missingName = ordersQuery('incremental-spec-missing-name', [
-  'item_id',
-  'customer_id',
-]);
+const missingName = ordersQuery(
+  'incremental-spec-missing-name',
+  { filter: ['item_id'], shown: ['customer_id'] },
+  { filter: ['type', 'price'], via: 'item_id' },
+);
+/** Declares price as shown, though minPrice filters on it: orders never enter on a price change. */
+const priceAsShown = ordersQuery(
+  'incremental-spec-price-shown',
+  { filter: ['item_id'], shown: ['name', 'customer_id'] },
+  { filter: ['type'], shown: ['price'], via: 'item_id' },
+);
 
 interface Item {
   id: string;
@@ -477,6 +492,21 @@ describe('incremental vs full', () => {
       expect(await run(correct, seed, 150)).toBeUndefined();
     },
   );
+
+  it.each([1, 2, 3])(
+    'is also exact without via, through the link query (seed %i)',
+    async (seed) => {
+      expect(await run(withoutVia, seed, 150)).toBeUndefined();
+    },
+  );
+
+  it('catches a filter field declared as shown', async () => {
+    const mismatches = await Promise.all(
+      [1, 2, 3].map((seed) => run(priceAsShown, seed, 150)),
+    );
+
+    expect(mismatches.some((m) => m !== undefined)).toBe(true);
+  });
 
   it('catches a shown column missing from dependsOn', async () => {
     const mismatches = await Promise.all(

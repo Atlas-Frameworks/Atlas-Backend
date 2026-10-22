@@ -22,6 +22,7 @@ describe('example OrdersController', () => {
         name: 'n',
         item_type: 'book',
         item_price: '10.00',
+        item_id: 'i-1',
       },
       {
         id: 'order-2',
@@ -29,6 +30,7 @@ describe('example OrdersController', () => {
         name: 'n',
         item_type: 'book',
         item_price: '10.00',
+        item_id: 'i-1',
       },
     ]);
     const moduleRef = await Test.createTestingModule({
@@ -76,6 +78,7 @@ describe('example OrdersController', () => {
           name: 'n',
           item_type: 'book',
           item_price: '10.00',
+          item_id: 'i-1',
         },
         {
           id: 'order-2',
@@ -83,6 +86,7 @@ describe('example OrdersController', () => {
           name: 'n',
           item_type: 'book',
           item_price: '10.00',
+          item_id: 'i-1',
         },
       ],
     });
@@ -107,10 +111,9 @@ describe('example OrdersController', () => {
     );
 
     expect(second.body.viewKey).toBe(first.body.viewKey);
-    const calls = db.query.mock.calls.map(([stmt]) => stmt as Stmt);
-    expect(calls.filter((stmt) => !isRowFetch(stmt))).toHaveLength(1);
-    // Each open reads the snapshot's rows by id.
-    expect(calls.filter(isRowFetch)).toHaveLength(2);
+    expect(second.body.rows).toEqual(first.body.rows);
+    // One query in all: the second open is answered from the view's memory.
+    expect(db.query).toHaveBeenCalledTimes(1);
   });
 
   it('opens a different view for a different route with the same params', async () => {
@@ -155,17 +158,14 @@ describe('example OrdersController', () => {
       .expect(400);
   });
 
-  it('selects the columns clients get, and reads them by id for the snapshot', async () => {
+  it('selects the columns clients get, in the one query the view runs', async () => {
     await request(app.getHttpServer()).get('/orders?type=book').expect(200);
 
-    const [load, rows] = db.query.mock.calls.map(([stmt]) => stmt as Stmt);
-    expect(load.text).toMatch(
+    const calls = db.query.mock.calls.map(([stmt]) => stmt as Stmt);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].text).toMatch(
       /SELECT\s+o\.id, o\.version, o\.name, o\.customer_id, o\.item_id,\s+i\.type AS item_type, i\.price AS item_price\s+FROM orders o/,
     );
-    expect(rows.text).toBe(
-      `SELECT q.* FROM (${load.text}) q WHERE q.id = ANY($2)`,
-    );
-    expect(rows.values).toEqual([['book'], ['order-1', 'order-2']]);
   });
 
   it('returns any page of rows, all from one view loaded once', async () => {
@@ -187,6 +187,7 @@ describe('example OrdersController', () => {
             version: '1',
             item_type: 'book',
             item_price: '1.00',
+            item_id: 'i-1',
           })),
       ),
     );
@@ -207,13 +208,8 @@ describe('example OrdersController', () => {
     expect(new Set([first, middle, all].map((r) => r.body.viewKey)).size).toBe(
       1,
     );
-    const calls = db.query.mock.calls.map(([stmt]) => stmt as Stmt);
-    expect(calls.filter((stmt) => !isRowFetch(stmt))).toHaveLength(1);
-    expect(calls.filter(isRowFetch).map((stmt) => stmt.values.at(-1))).toEqual([
-      ['o-a', 'o-b'],
-      ['o-b', 'o-c'],
-      ['o-d', 'o-c', 'o-b', 'o-a'],
-    ]);
+    // The load only: every page is cut from memory, rows included.
+    expect(db.query).toHaveBeenCalledTimes(1);
   });
 
   it.each([

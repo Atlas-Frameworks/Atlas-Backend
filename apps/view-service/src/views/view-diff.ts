@@ -1,20 +1,19 @@
-import { createHash } from 'node:crypto';
+import type { RefIndex } from './ref-index.js';
 import type { SortKeys } from './sort-keys.js';
 
 /** One row of a view's query: `id`, `version`, and the columns the developer selected. */
 export type Row = { id: string; version: number } & Record<string, unknown>;
 
-/**
- * What a view keeps per entity. No row data: only what is needed to tell
- * whether a row it sees again has changed.
- */
+/** What a view keeps per entity: the row, and indexes over it. */
 export interface Membership {
   /** id → version. */
   readonly ids: Map<string, number>;
-  /** id → hash of the row last seen. A changed column, also one joined from a related entity, changes it. */
-  readonly hashes: Map<string, number>;
-  /** The sortable columns' values of every id held. */
+  /** id → the row as the query last returned it, so any page needs no query. */
+  readonly rows: Map<string, Row>;
+  /** The sortable columns' values of every id held, and the sorted indexes. */
   readonly sortKeys: SortKeys;
+  /** Related id → held ids, for each `via` column. */
+  readonly refs: RefIndex;
 }
 
 /** What changed in a view in one tick. Sent to clients as one `delta` event. */
@@ -36,27 +35,32 @@ export const emptyDiff = (): ViewDiff => ({
 export const isEmpty = (diff: ViewDiff): boolean =>
   diff.added.length + diff.updated.length + diff.removed.length === 0;
 
-/** 48 bits of the row's SHA-1: fits a number, and a collision is not a practical concern. */
-export function hashRow(row: Row): number {
-  return createHash('sha1')
-    .update(JSON.stringify(row))
-    .digest()
-    .readUIntBE(0, 6);
-}
-
 /** Stores a row the view now holds, or a newer version of it. */
-export function hold(view: Membership, row: Row, hash = hashRow(row)): void {
-  const isNew = !view.ids.has(row.id);
+export function hold(view: Membership, row: Row): void {
+  const prev = view.rows.get(row.id);
   view.ids.set(row.id, row.version);
-  view.hashes.set(row.id, hash);
-  view.sortKeys.set(row, isNew);
+  view.rows.set(row.id, row);
+  view.sortKeys.set(row, prev === undefined);
+  view.refs.set(row, prev);
 }
 
 /** Forgets an id the view no longer holds. */
 function drop(view: Membership, id: string): void {
-  view.ids.delete(id);
-  view.hashes.delete(id);
+  const prev = view.rows.get(id);
+  if (prev) {
+    view.refs.delete(prev);
+  }
   view.sortKeys.delete(id);
+  view.ids.delete(id);
+  view.rows.delete(id);
+}
+
+/** Forgets every row, before a full load. */
+export function clearAll(view: Membership): void {
+  view.ids.clear();
+  view.rows.clear();
+  view.sortKeys.clear();
+  view.refs.clear();
 }
 
 /** Removes deleted entities from the view. No query is needed. */
@@ -112,7 +116,7 @@ export function applyFull(
     matching.add(row.id);
     apply(view, row.id, row, diff);
   }
-  for (const id of view.ids.keys()) {
+  for (const id of [...view.ids.keys()]) {
     if (!matching.has(id)) {
       apply(view, id, undefined, diff);
     }
@@ -126,21 +130,27 @@ function apply(
   row: Row | undefined,
   diff: ViewDiff,
 ): void {
-  const held = view.ids.get(id);
+  const held = view.rows.get(id);
   if (!row) {
-    if (held !== undefined) {
+    if (held) {
       drop(view, id);
       diff.removed.push(id);
     }
-  } else if (held === undefined) {
+  } else if (!held) {
     hold(view, row);
     diff.added.push(row);
-  } else if (row.version >= held) {
+  } else if (
+    row.version >= held.version &&
+    (row.version > held.version || !sameRow(row, held))
+  ) {
     // An older row than the one held is a lagging replica: keep what we have.
-    const hash = hashRow(row);
-    if (row.version > held || hash !== view.hashes.get(id)) {
-      hold(view, row, hash);
-      diff.updated.push(row);
-    }
+    // A changed column at the same version comes from a related entity.
+    hold(view, row);
+    diff.updated.push(row);
   }
+}
+
+/** Rows from the same query have the same columns in the same order. */
+function sameRow(a: Row, b: Row): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }

@@ -58,7 +58,7 @@ function setup() {
     );
     return { window, first, events, listener };
   };
-  const changed = (...rows: Row[]) => new Map(rows.map((r) => [r.id, r]));
+  const changed = (...rows: Row[]) => new Set(rows.map((r) => r.id));
 
   return { db, loader, service, view, put, remove, open, changed };
 }
@@ -83,10 +83,10 @@ describe('live windows', () => {
     return s;
   }
 
-  it('starts with the range and its rows, at seq 0', async () => {
-    const { open } = five();
+  it('starts with the range and its rows from memory, at seq 0', async () => {
+    const { open, loader } = five();
 
-    const first = await open(1, 2).first;
+    const first = open(1, 2).first;
 
     expect(first).toEqual({
       type: 'window',
@@ -102,6 +102,7 @@ describe('live windows', () => {
         ],
       },
     });
+    expect(loader.fetchByIds).not.toHaveBeenCalled();
   });
 
   it('sends nothing when neither the range, its rows nor the total changed', async () => {
@@ -129,10 +130,10 @@ describe('live windows', () => {
       seq: 1,
       data: { ids: ['b', 'c'], rows: [c] },
     });
-    expect(loader.fetchByIds).toHaveBeenCalledWith(view, []);
+    expect(loader.fetchByIds).not.toHaveBeenCalled();
   });
 
-  it('reads the rows that slid into the range, once for every window', async () => {
+  it('sends the rows that slid into the range, from memory', async () => {
     const { service, view, put, open, changed, loader } = five();
     const first = open(1, 2);
     const second = open(2, 2);
@@ -149,8 +150,7 @@ describe('live windows', () => {
     expect(rowIds(first.events[0])).toEqual(['a']);
     expect(dataOf(second.events[0]).ids).toEqual(['b', 'c']);
     expect(rowIds(second.events[0])).toEqual(['b']);
-    expect(loader.fetchByIds).toHaveBeenCalledTimes(1);
-    expect(loader.fetchByIds.mock.calls[0][1].sort()).toEqual(['a', 'b']);
+    expect(loader.fetchByIds).not.toHaveBeenCalled();
   });
 
   it('sends the new total even when the range is the same', async () => {
@@ -206,20 +206,6 @@ describe('live windows', () => {
     expect(view.inUse()).toBe(false);
     expect(view.closesAt).toBeDefined();
     clearTimeout(view.closeTimer);
-  });
-
-  it('tries again on the next call when the rows could not be read', async () => {
-    const { service, view, put, open, changed, loader } = five();
-    const { events, window } = open(1, 2);
-    loader.fetchByIds.mockRejectedValueOnce(new Error('connection lost'));
-
-    await service.publishWindows(view, changed(put('z', 5)));
-    expect(events).toEqual([]);
-    expect(window.stale).toBe(true);
-
-    await service.publishWindows(view, changed());
-    expect(dataOf(events[0]).ids).toEqual(['a', 'b']);
-    expect(window.stale).toBe(false);
   });
 
   it('keeps a client that applies every event equal to the live range, through random changes', async () => {

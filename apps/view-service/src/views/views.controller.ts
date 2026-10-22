@@ -64,8 +64,9 @@ export class ViewsController {
 
   /**
    * GET /views/:viewKey/events — the view's changes, live. Every event's seq
-   * is sent as the SSE id. If the rows can't be read, the stream ends and
-   * the client reconnects.
+   * is sent as the SSE id.
+   *
+   * Every first event is answered from the view's memory, with no query.
    *
    * - Without limit (?sort= optional): a `snapshot` of every row, then a
    *   `delta` per tick with the rows added, updated and removed.
@@ -89,42 +90,24 @@ export class ViewsController {
       });
     }
     const events = new Observable<MessageEvent>((subscriber) => {
-      // The first event's seq and the listener are taken in one synchronous
-      // step, so no event can fall between them. Events published while the
-      // rows are read wait, and follow the first event.
-      let waiting: ViewEvent[] | undefined = [];
+      // The first event comes from memory, in the same synchronous step that
+      // adds the listener, so no event can fall between them.
       const listener: ViewListener = {
-        send: (event) =>
-          waiting ? waiting.push(event) : subscriber.next(toMessage(event)),
+        send: (event) => subscriber.next(toMessage(event)),
       };
-      let first: Promise<ViewEvent>;
-      let stop: () => void;
       if (limit === undefined) {
-        first = this.views
-          .page(view, request)
-          .then((data) => ({ type: 'snapshot', seq: data.seq, data }));
+        const data = this.views.page(view, request);
+        subscriber.next(toMessage({ type: 'snapshot', seq: data.seq, data }));
         this.views.addListener(view, listener);
-        stop = () => this.views.removeListener(view, listener);
-      } else {
-        const opened = this.views.openWindow(
-          view,
-          { ...request, limit },
-          listener,
-        );
-        first = opened.first;
-        stop = () => this.views.closeWindow(view, opened.window, listener);
+        return () => this.views.removeListener(view, listener);
       }
-      first.then(
-        (event) => {
-          subscriber.next(toMessage(event));
-          for (const later of waiting ?? []) {
-            subscriber.next(toMessage(later));
-          }
-          waiting = undefined;
-        },
-        (err: unknown) => subscriber.error(err),
+      const { window, first } = this.views.openWindow(
+        view,
+        { ...request, limit },
+        listener,
       );
-      return stop;
+      subscriber.next(toMessage(first));
+      return () => this.views.closeWindow(view, window, listener);
     });
     const heartbeat = interval(HEARTBEAT_MS).pipe(
       map((): MessageEvent => ({ comment: 'ping' })),
@@ -141,7 +124,7 @@ export class ViewsController {
   rows(
     @Param('viewKey') key: string,
     @Query() query: Record<string, unknown>,
-  ): Promise<ViewPage> {
+  ): ViewPage {
     const view = this.loadedView(key);
     return this.views.read(view, pageRequest(view.sortKeys.types, query));
   }
@@ -219,7 +202,9 @@ export interface ViewsDebug {
 }
 
 export interface DependencyDebug {
-  fields: string[] | 'all';
+  filter: string[] | 'every field not shown';
+  shown: string[];
+  via?: string;
   /** The link SQL text, for a related type. */
   link?: string;
 }
@@ -231,7 +216,9 @@ function describe(
   const out: Record<string, DependencyDebug> = {};
   for (const [type, dep] of Object.entries(deps ?? {})) {
     out[type] = {
-      fields: dep.fields ?? 'all',
+      filter: dep.filter ?? 'every field not shown',
+      shown: dep.shown ?? [],
+      ...(dep.via && { via: dep.via }),
       ...(dep.link && { link: toStatement(dep.link([])).text }),
     };
   }

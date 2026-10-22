@@ -7,14 +7,13 @@ import {
 import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import { ChangeBuffer, type ChangeBatch } from '../changes/change-buffer.js';
 import type { Dependency } from './define-query.js';
-import { DependencyIndex } from './dependency-index.js';
+import { DependencyIndex, type Level } from './dependency-index.js';
 import {
   applyDeletes,
   applyFull,
   applyRecheck,
   emptyDiff,
   isEmpty,
-  type Row,
   type ViewDiff,
 } from './view-diff.js';
 import { ViewLoader } from './view-loader.js';
@@ -93,8 +92,7 @@ export class TickService implements OnApplicationBootstrap, OnModuleDestroy {
       batch.events.length === 0 &&
       batch.gapTypes.length === 0 &&
       dirty.size === 0 &&
-      reload.size === 0 &&
-      !this.registry.list().some(hasStaleWindow)
+      reload.size === 0
     ) {
       return;
     }
@@ -142,39 +140,58 @@ export class TickService implements OnApplicationBootstrap, OnModuleDestroy {
       }
     }
 
-    // 2. Candidates: own-type changes name their id; related-type changes go through a link.
+    // 2. Candidates. A filter change can add rows: re-check the id, or run the
+    // link to find ids. A shown change only touches held rows: re-check those
+    // the view holds, found from memory through `via` when declared.
     const work = new Map<string, ViewWork>();
     for (const [viewKey, ids] of dirty) {
       for (const [id, version] of ids) {
         addRecheck(work, viewKey, id, version);
       }
     }
-    const links = new Map<Link, { ids: Set<string>; viewKeys: Set<string> }>();
+    const links = new Map<
+      Link,
+      { ids: Set<string>; viewKeys: Map<string, Level> }
+    >();
     for (const evt of batch.events) {
       const { own, linked } = this.dependencies.candidates(evt);
-      for (const viewKey of own) {
+      for (const { viewKey, level } of own) {
         if (evt.op === 'delete') {
           workOf(work, viewKey).deleted.add(evt.id);
-        } else {
+        } else if (level === 'filter' || this.mayHold(viewKey, evt.id)) {
           addRecheck(work, viewKey, evt.id, evt.version);
         }
       }
-      for (const { viewKey, link } of linked) {
+      for (const { viewKey, level, link, via } of linked) {
+        const view = this.registry.get(viewKey);
+        const inMemory = via !== undefined && view?.loaded === true;
+        if (inMemory) {
+          for (const id of view.refs.heldBy(via, evt.id)) {
+            addRecheck(work, viewKey, id, 0);
+          }
+        }
+        if (level === 'shown' && inMemory) {
+          continue;
+        }
         // Views that share a link (the same function) run it once, for all changed ids.
         let group = links.get(link);
         if (!group) {
-          group = { ids: new Set(), viewKeys: new Set() };
+          group = { ids: new Set(), viewKeys: new Map() };
           links.set(link, group);
         }
         group.ids.add(evt.id);
-        group.viewKeys.add(viewKey);
+        if (group.viewKeys.get(viewKey) !== 'filter') {
+          group.viewKeys.set(viewKey, level);
+        }
       }
     }
     for (const [link, group] of links) {
       const ids = await this.loader.linked(link, [...group.ids]);
-      for (const viewKey of group.viewKeys) {
+      for (const [viewKey, level] of group.viewKeys) {
         for (const id of ids) {
-          addRecheck(work, viewKey, id, 0);
+          if (level === 'filter' || this.mayHold(viewKey, id)) {
+            addRecheck(work, viewKey, id, 0);
+          }
         }
       }
     }
@@ -199,13 +216,15 @@ export class TickService implements OnApplicationBootstrap, OnModuleDestroy {
         await yieldToLoop();
       }
     }
+  }
 
-    // 5. Ranges whose last update couldn't read its rows, on views that didn't change now.
-    for (const view of this.registry.list()) {
-      if (hasStaleWindow(view)) {
-        await this.views.publishWindows(view, new Map());
-      }
-    }
+  /**
+   * Whether the view may hold the id, so a shown change to it matters. A
+   * view still loading may: its load can predate the change.
+   */
+  private mayHold(viewKey: string, id: string): boolean {
+    const view = this.registry.get(viewKey);
+    return view !== undefined && (!view.loaded || view.ids.has(id));
   }
 
   private async recheck(view: View, todo: ViewWork): Promise<void> {
@@ -233,7 +252,7 @@ export class TickService implements OnApplicationBootstrap, OnModuleDestroy {
         this.markDirty(view.viewKey, id, version);
       }
     }
-    await this.send(view, diff);
+    this.send(view, diff);
   }
 
   private async reload(view: View): Promise<void> {
@@ -245,22 +264,22 @@ export class TickService implements OnApplicationBootstrap, OnModuleDestroy {
     this.stats.reloaded += 1;
     const diff = emptyDiff();
     applyFull(view, rows, diff);
-    await this.send(view, diff);
+    this.send(view, diff);
   }
 
   /** One `delta` to whole-view streams, and a `window` event to each range that changed. */
-  private async send(view: View, diff: ViewDiff): Promise<void> {
+  private send(view: View, diff: ViewDiff): void {
     if (isEmpty(diff)) {
       return;
     }
     this.stats.deltas += 1;
     this.views.publish(view, 'delta', { ...diff, total: view.ids.size });
     if (view.windows.size > 0) {
-      const changed = new Map<string, Row>();
+      const changed = new Set<string>();
       for (const row of [...diff.added, ...diff.updated]) {
-        changed.set(row.id, row);
+        changed.add(row.id);
       }
-      await this.views.publishWindows(view, changed);
+      this.views.publishWindows(view, changed);
     }
   }
 
@@ -292,13 +311,4 @@ function addRecheck(
 ): void {
   const { recheck } = workOf(work, viewKey);
   recheck.set(id, Math.max(recheck.get(id) ?? 0, version));
-}
-
-function hasStaleWindow(view: View): boolean {
-  for (const window of view.windows.values()) {
-    if (window.stale) {
-      return true;
-    }
-  }
-  return false;
 }

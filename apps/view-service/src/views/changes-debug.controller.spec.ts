@@ -23,6 +23,7 @@ describe('GET /changes', () => {
           name: 'n',
           item_type: 'book',
           item_price: '10.00',
+          item_id: 'i-1',
         },
       ]),
       onModuleDestroy: vi.fn(),
@@ -92,7 +93,7 @@ describe('GET /changes', () => {
           version: 3,
           typeSeq: 2,
           fields: ['item_id'],
-          candidates: { own: [viewKey], linked: [] },
+          candidates: { own: [`${viewKey} (filter)`], linked: [] },
         },
         {
           id: 'order-2',

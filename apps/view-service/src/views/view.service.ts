@@ -8,6 +8,7 @@ import { ChangeFeed } from '../changes/change-feed.js';
 import {
   defaultSortOf,
   queryKey,
+  viaColumnsOf,
   type QueryDefinition,
 } from './define-query.js';
 import { DependencyIndex } from './dependency-index.js';
@@ -81,6 +82,7 @@ export class ViewService implements OnModuleDestroy {
       toStatement(query.build(params)),
       query.sortable,
       defaultSortOf(query),
+      viaColumnsOf(query),
     );
     this.cancelClose(view);
     this.dependencies.add(view.viewKey, query.entityType, query.dependsOn);
@@ -88,8 +90,9 @@ export class ViewService implements OnModuleDestroy {
       await this.feed.watch(
         Object.keys(this.dependencies.dependenciesOf(view.viewKey)!),
       );
+      // Runs the query only for a new view; an open view answers from memory.
       await this.loader.ensureLoaded(view);
-      return await this.page(view, page);
+      return this.page(view, page);
     } catch (err) {
       this.logger.error(`opening view ${view.viewKey} failed`, err);
       throw new ServiceUnavailableException({
@@ -138,13 +141,8 @@ export class ViewService implements OnModuleDestroy {
     }
   }
 
-  /**
-   * A range of the view's rows at its current seq. Which ids, and their
-   * order, come from memory at the call, with no query; then only those
-   * rows are read by id. A row may already be newer than seq, or gone: the
-   * deltas after seq bring the client to the same state.
-   */
-  page(view: View, request: PageRequest): Promise<ViewPage> {
+  /** A range of the view's rows at its current seq, from memory: no query. */
+  page(view: View, request: PageRequest): ViewPage {
     const spec = request.sort ?? view.defaultSort;
     const sorted = view.sorted(spec).ids;
     const offset = request.offset ?? 0;
@@ -152,46 +150,35 @@ export class ViewService implements OnModuleDestroy {
       offset,
       request.limit === undefined ? undefined : offset + request.limit,
     );
-    const page = {
+    return {
       viewKey: view.viewKey,
       seq: view.seq,
       sort: sortName(spec),
       offset,
       total: sorted.length,
+      rows: rowsOf(view, ids),
     };
-    return this.loader
-      .fetchByIds(view, ids)
-      .then((rows) => ({ ...page, rows: inOrder(rows, ids) }));
   }
 
   /**
    * A page of an open view, for a client that already has its viewKey. Like
    * opening it again, this restarts its close timer if nobody streams it.
    */
-  async read(view: View, request: PageRequest): Promise<ViewPage> {
+  read(view: View, request: PageRequest): ViewPage {
     this.closeWhenIdle(view);
-    try {
-      return await this.page(view, request);
-    } catch (err) {
-      this.logger.error(`reading view ${view.viewKey} failed`, err);
-      throw new ServiceUnavailableException({
-        code: 'RETRY',
-        message: 'could not read the rows, try again',
-      });
-    }
+    return this.page(view, request);
   }
 
   /**
    * Starts streaming one range of the view. The window is shared by every
-   * client on the same sort and range, and created by the first. `first`
-   * resolves to the first event: the window's ids and seq taken at the call,
-   * and their rows.
+   * client on the same sort and range, and created by the first. `first` is
+   * the first event: the window's ids at its current seq, with their rows.
    */
   openWindow(
     view: View,
     request: PageRequest & { limit: number },
     listener: ViewListener,
-  ): { window: LiveWindow; first: Promise<ViewEvent> } {
+  ): { window: LiveWindow; first: ViewEvent } {
     const spec = request.sort ?? view.defaultSort;
     const offset = request.offset ?? 0;
     const key = windowKey(spec, offset, request.limit);
@@ -203,14 +190,18 @@ export class ViewService implements OnModuleDestroy {
       window.total = sorted.length;
       view.windows.set(key, window);
     }
-    const { seq, ids, total } = window;
     window.listeners.add(listener);
     this.cancelClose(view);
-    const first = this.loader.fetchByIds(view, ids).then((rows): ViewEvent => ({
+    const first: ViewEvent = {
       type: 'window',
-      seq,
-      data: windowData(window, total, ids, inOrder(rows, ids)),
-    }));
+      seq: window.seq,
+      data: windowData(
+        window,
+        window.total,
+        window.ids,
+        rowsOf(view, window.ids),
+      ),
+    };
     return { window, first };
   }
 
@@ -228,21 +219,10 @@ export class ViewService implements OnModuleDestroy {
 
   /**
    * After a tick changed the view: sends a `window` event to each range
-   * whose ids, order or total changed, or that holds a changed row. Rows
-   * come from `changed` (the tick's re-check) when they can; the rest, rows
-   * that slid into a range unchanged, are read in one query for the view.
+   * whose ids, order or total changed, or that holds a row in `changed`.
+   * The rows sent, changed or slid into the range, come from memory.
    */
-  async publishWindows(
-    view: View,
-    changed: ReadonlyMap<string, Row>,
-  ): Promise<void> {
-    const updates: {
-      window: LiveWindow;
-      ids: string[];
-      total: number;
-      send: string[];
-    }[] = [];
-    const missing = new Set<string>();
+  publishWindows(view: View, changed: ReadonlySet<string>): void {
     for (const window of view.windows.values()) {
       const sorted = view.sorted(window.spec).ids;
       const ids = sorted.slice(window.offset, window.offset + window.limit);
@@ -251,49 +231,15 @@ export class ViewService implements OnModuleDestroy {
       const sameIds =
         ids.length === window.ids.length &&
         ids.every((id, i) => id === window.ids[i]);
-      if (
-        sameIds &&
-        send.length === 0 &&
-        sorted.length === window.total &&
-        !window.stale
-      ) {
+      if (sameIds && send.length === 0 && sorted.length === window.total) {
         continue;
       }
-      for (const id of send) {
-        if (!changed.has(id)) {
-          missing.add(id);
-        }
-      }
-      updates.push({ window, ids, total: sorted.length, send });
-    }
-    if (updates.length === 0) {
-      return;
-    }
-    let read: Row[];
-    try {
-      read = await this.loader.fetchByIds(view, [...missing]);
-    } catch (err) {
-      this.logger.error(
-        `reading rows for windows of ${view.viewKey} failed`,
-        err,
-      );
-      for (const { window } of updates) {
-        window.stale = true;
-      }
-      return;
-    }
-    const fetched = new Map(read.map((row) => [row.id, row]));
-    for (const { window, ids, total, send } of updates) {
       window.ids = ids;
-      window.total = total;
-      window.stale = false;
-      const rows = send.flatMap(
-        (id) => changed.get(id) ?? fetched.get(id) ?? [],
-      );
+      window.total = sorted.length;
       const event: ViewEvent = {
         type: 'window',
         seq: window.nextSeq(),
-        data: windowData(window, total, ids, rows),
+        data: windowData(window, window.total, ids, rowsOf(view, send)),
       };
       for (const listener of window.listeners) {
         listener.send(event);
@@ -329,10 +275,9 @@ export class ViewService implements OnModuleDestroy {
   }
 }
 
-/** The rows in the order of `ids`; ids whose row wasn't returned are left out. */
-function inOrder(rows: Row[], ids: readonly string[]): Row[] {
-  const byId = new Map(rows.map((row) => [row.id, row]));
-  return ids.flatMap((id) => byId.get(id) ?? []);
+/** The held rows of these ids, in this order. */
+function rowsOf(view: View, ids: readonly string[]): Row[] {
+  return ids.map((id) => view.rows.get(id)!);
 }
 
 function windowData(

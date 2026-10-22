@@ -28,16 +28,34 @@ export interface QueryDefinition<P> {
   build(params: P): Sql;
 }
 
-/** How a query depends on one entity type. */
+/**
+ * How a query depends on one entity type. Every field the SQL reads, in
+ * WHERE or in SELECT, must be in `filter` or `shown`; a change to any other
+ * field is ignored.
+ */
 export interface Dependency {
   /**
-   * Fields of this type the SQL reads. A change to any other field can't change
-   * the result. Leave it out to re-check on every change (always safe).
+   * Fields that decide whether a row matches (WHERE, JOIN). A change can add
+   * or remove rows, so it is re-checked wherever it may matter. Leave it out
+   * to treat every field not in `shown` as a filter (always safe).
    */
-  fields?: string[];
+  filter?: string[];
+  /**
+   * Fields only sent to clients, never filtered on. A change matters only to
+   * rows the view already holds, so other rows are never re-checked for it.
+   * A field filtered on even by some params must be in `filter` instead.
+   */
+  shown?: string[];
+  /**
+   * For a related type: the column of the view's row that holds this type's
+   * id, e.g. `item_id`. The view then knows from memory which of its rows a
+   * changed item is shown in: a `shown` change needs no link query.
+   */
+  via?: string;
   /**
    * Required for a type other than `entityType`: SQL returning the `id` of
-   * every `entityType` row linked to the changed ids of this type.
+   * every `entityType` row linked to the changed ids of this type. Run for
+   * `filter` changes, which can bring rows the view doesn't hold yet.
    */
   link?: (ids: string[]) => Sql;
 }
@@ -46,8 +64,9 @@ const names = new Set<string>();
 
 /**
  * Registers a query. Throws if the name is taken, so two queries never share
- * views, if a related type has no link, so its changes can't be missed, or
- * if the default sort is not a sortable column.
+ * views, if a related type has no link, so its changes can't be missed, if
+ * a field is both filter and shown, if `via` is set on the query's own type,
+ * or if the default sort is not a sortable column.
  */
 export function defineQuery<P>(def: QueryDefinition<P>): QueryDefinition<P> {
   if (names.has(def.name)) {
@@ -63,9 +82,27 @@ export function defineQuery<P>(def: QueryDefinition<P>): QueryDefinition<P> {
     if (type !== def.entityType && dep.link === undefined) {
       throw new Error(`query ${def.name}: dependency ${type} needs a link`);
     }
+    if (type === def.entityType && dep.via !== undefined) {
+      throw new Error(
+        `query ${def.name}: via is for related types, not ${type}`,
+      );
+    }
+    const both = (dep.filter ?? []).filter((f) => dep.shown?.includes(f));
+    if (both.length > 0) {
+      throw new Error(
+        `query ${def.name}: ${type}.${both.join(', ')} is both filter and shown`,
+      );
+    }
   }
   names.add(def.name);
   return def;
+}
+
+/** The `via` columns of the query's dependencies. */
+export function viaColumnsOf(def: QueryDefinition<unknown>): string[] {
+  return Object.values(def.dependsOn).flatMap((dep) =>
+    dep.via === undefined ? [] : [dep.via],
+  );
 }
 
 /** The query's default sort, or undefined to sort by id. */

@@ -1,7 +1,6 @@
 import type { DbService } from '../db/db.service.js';
 import { View } from './view.js';
 import { sql } from './sql.js';
-import { hashRow } from './view-diff.js';
 import { recheckStatement, ViewLoader } from './view-loader.js';
 
 const statement = {
@@ -16,7 +15,7 @@ function setup(query: () => Promise<{ id: string; version: string }[]>) {
 }
 
 describe('ViewLoader', () => {
-  it("fills the view with ids, versions and row hashes from the view's statement", async () => {
+  it("fills the view with ids, versions and rows from the view's statement", async () => {
     const { db, loader, view } = setup(async () => [
       { id: 'a', version: '3', name: 'x' },
       { id: 'b', version: '1', name: 'y' },
@@ -30,9 +29,7 @@ describe('ViewLoader', () => {
       ['a', 3],
       ['b', 1],
     ]);
-    expect(view.hashes.get('a')).toBe(
-      hashRow({ id: 'a', version: 3, name: 'x' }),
-    );
+    expect(view.rows.get('a')).toEqual({ id: 'a', version: 3, name: 'x' });
   });
 
   it('keeps the sortable columns of every loaded row', async () => {

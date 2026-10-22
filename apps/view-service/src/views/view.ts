@@ -1,8 +1,9 @@
 import { SortKeys, type SortSpec, type SortType } from './sort-keys.js';
 import type { SortedIndex } from './sorted-index.js';
 import type { LiveWindow } from './live-window.js';
+import { RefIndex } from './ref-index.js';
 import type { SqlStatement } from './sql.js';
-import type { Membership } from './view-diff.js';
+import type { Membership, Row } from './view-diff.js';
 
 /** A message for everyone streaming a view. `seq` grows by one per event. */
 export interface ViewEvent {
@@ -18,8 +19,8 @@ export interface ViewListener {
 
 /**
  * One distinct query. Every user with the same viewKey shares it.
- * Holds matching IDs with a version and a row hash, never whole rows:
- * rows are read from Postgres by id when they are sent.
+ * Holds the rows of its result, so any page or snapshot is answered from
+ * memory; the tick keeps them current.
  */
 export class View implements Membership {
   /**
@@ -27,9 +28,11 @@ export class View implements Membership {
    * A Map for the POC; E-04's typed-array store replaces it.
    */
   readonly ids = new Map<string, number>();
-  /** id → hash of the row last seen, to notice a changed column. */
-  readonly hashes = new Map<string, number>();
+  /** id → the row as the query last returned it. */
+  readonly rows = new Map<string, Row>();
   readonly sortKeys: SortKeys;
+  /** Related id → held ids, for each `via` column of the query's dependencies. */
+  readonly refs: RefIndex;
   /** Streams of the whole view: a snapshot, then every delta. */
   readonly listeners = new Set<ViewListener>();
   /** Live ranges of the view, by window key; each has its own listeners. */
@@ -53,8 +56,11 @@ export class View implements Membership {
     sortable: Readonly<Record<string, SortType>> = {},
     /** The sort when a client asks for none; undefined: by id. */
     readonly defaultSort?: SortSpec,
+    /** Columns holding related ids, from the dependencies' `via`. */
+    via: readonly string[] = [],
   ) {
     this.sortKeys = new SortKeys(sortable);
+    this.refs = new RefIndex(via);
   }
 
   /**

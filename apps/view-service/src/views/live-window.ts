@@ -27,8 +27,6 @@ export class LiveWindow {
   total = 0;
   /** Sequence number of the last event sent. */
   seq = 0;
-  /** The last update couldn't read its rows: compare again next tick. */
-  stale = false;
 
   constructor(
     /** Undefined: by id. */

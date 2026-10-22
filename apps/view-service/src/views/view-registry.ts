@@ -19,10 +19,11 @@ export class ViewRegistry {
     statement: SqlStatement,
     sortable?: Readonly<Record<string, SortType>>,
     defaultSort?: SortSpec,
+    via?: readonly string[],
   ): View {
     let view = this.views.get(key);
     if (!view) {
-      view = new View(key, entityType, statement, sortable, defaultSort);
+      view = new View(key, entityType, statement, sortable, defaultSort, via);
       this.views.set(key, view);
     }
     return view;

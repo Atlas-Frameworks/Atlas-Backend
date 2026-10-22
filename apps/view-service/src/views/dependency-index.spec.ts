@@ -4,9 +4,11 @@ import { DependencyIndex } from './dependency-index.js';
 import { sql, toStatement } from './sql.js';
 
 const ordersDeps: Record<string, Dependency> = {
-  orders: { fields: ['item_id', 'customer_id'] },
+  orders: { filter: ['item_id', 'customer_id'], shown: ['name'] },
   items: {
-    fields: ['type', 'price'],
+    filter: ['type'],
+    shown: ['price'],
+    via: 'item_id',
     link: (ids) => sql`SELECT o.id FROM orders o WHERE o.item_id = ANY(${ids})`,
   },
 };
@@ -41,15 +43,32 @@ describe('DependencyIndex', () => {
     index.add('orders-view', 'orders', ordersDeps);
   });
 
-  it('re-checks own-type views when a field they read changes', () => {
+  it('marks a change to a filter field as filter', () => {
     expect(index.candidates(event('orders', update('item_id')))).toEqual({
-      own: ['orders-view'],
+      own: [{ viewKey: 'orders-view', level: 'filter' }],
       linked: [],
     });
   });
 
-  it('skips own-type views when only other fields change', () => {
-    expect(index.candidates(event('orders', update('name'))).own).toEqual([]);
+  it('marks a change to only shown fields as shown', () => {
+    expect(index.candidates(event('orders', update('name'))).own).toEqual([
+      { viewKey: 'orders-view', level: 'shown' },
+    ]);
+  });
+
+  it('counts a change to filter and shown fields together as filter', () => {
+    const both = {
+      old: { name: 'a', item_id: 'x' },
+      new: { name: 'b', item_id: 'y' },
+    };
+
+    expect(index.candidates(event('orders', both)).own).toEqual([
+      { viewKey: 'orders-view', level: 'filter' },
+    ]);
+  });
+
+  it('skips own-type views when only undeclared fields change', () => {
+    expect(index.candidates(event('orders', update('note'))).own).toEqual([]);
     expect(index.candidates(event('orders', { old: {}, new: {} })).own).toEqual(
       [],
     );
@@ -62,19 +81,28 @@ describe('DependencyIndex', () => {
     };
 
     expect(index.candidates(event('orders', insert)).own).toEqual([
-      'orders-view',
+      { viewKey: 'orders-view', level: 'filter' },
     ]);
     expect(index.candidates(event('orders', undefined, 'delete')).own).toEqual([
-      'orders-view',
+      { viewKey: 'orders-view', level: 'filter' },
     ]);
   });
 
-  it('returns related-type views with their link', () => {
-    const { own, linked } = index.candidates(event('items', update('price')));
+  it('returns related-type views with their level, link and via', () => {
+    const shown = index.candidates(event('items', update('price')));
+    const filter = index.candidates(event('items', update('type')));
 
-    expect(own).toEqual([]);
-    expect(linked.map((c) => c.viewKey)).toEqual(['orders-view']);
-    expect(toStatement(linked[0].link(['id-1']))).toEqual({
+    expect(shown.own).toEqual([]);
+    expect(shown.linked).toEqual([
+      {
+        viewKey: 'orders-view',
+        level: 'shown',
+        link: expect.any(Function),
+        via: 'item_id',
+      },
+    ]);
+    expect(filter.linked[0].level).toBe('filter');
+    expect(toStatement(filter.linked[0].link(['id-1']))).toEqual({
       text: 'SELECT o.id FROM orders o WHERE o.item_id = ANY($1)',
       values: [['id-1']],
     });
@@ -84,12 +112,21 @@ describe('DependencyIndex', () => {
     expect(index.candidates(event('items', update('name'))).linked).toEqual([]);
   });
 
-  it('matches every change when no field list is declared', () => {
+  it('treats every field as filter when none is declared, except shown ones', () => {
     index.add('all-fields', 'customers', {});
+    index.add('some-shown', 'distributors', {
+      distributors: { shown: ['phone'] },
+    });
 
     expect(index.candidates(event('customers', update('address'))).own).toEqual(
-      ['all-fields'],
+      [{ viewKey: 'all-fields', level: 'filter' }],
     );
+    expect(
+      index.candidates(event('distributors', update('phone'))).own,
+    ).toEqual([{ viewKey: 'some-shown', level: 'shown' }]);
+    expect(
+      index.candidates(event('distributors', update('region'))).own,
+    ).toEqual([{ viewKey: 'some-shown', level: 'filter' }]);
   });
 
   it('watches the own type even when it is not listed', () => {
@@ -101,13 +138,13 @@ describe('DependencyIndex', () => {
       orders: {},
       items: { link: expect.any(Function) },
     });
-    expect(index.candidates(event('orders', update('name'))).own).toContain(
-      'items-only',
-    );
+    expect(
+      index.candidates(event('orders', update('name'))).own,
+    ).toContainEqual({ viewKey: 'items-only', level: 'filter' });
   });
 
   it('ignores types nobody depends on', () => {
-    expect(index.candidates(event('distributors', update('name')))).toEqual({
+    expect(index.candidates(event('suppliers', update('name')))).toEqual({
       own: [],
       linked: [],
     });

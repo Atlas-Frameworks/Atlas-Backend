@@ -2,28 +2,31 @@ import {
   applyDeletes,
   applyFull,
   applyRecheck,
+  clearAll,
   emptyDiff,
-  hashRow,
   hold,
   isEmpty,
   type Membership,
   type Row,
 } from './view-diff.js';
+import { RefIndex } from './ref-index.js';
 import { SortKeys } from './sort-keys.js';
 
-const row = (id: string, version: number, price = 10): Row => ({
+const row = (id: string, version: number, price = 10, item = 'i-1'): Row => ({
   id,
   version,
   name: `order ${id}`,
+  item_id: item,
   item_price: price,
 });
 
-/** A view holding a and b at version 1, price 10. */
+/** A view holding a and b at version 1, price 10, both of item i-1. */
 function held(): Membership {
   const view = {
     ids: new Map<string, number>(),
-    hashes: new Map<string, number>(),
+    rows: new Map<string, Row>(),
     sortKeys: new SortKeys({ item_price: 'number' }),
+    refs: new RefIndex(['item_id']),
   };
   hold(view, row('a', 1));
   hold(view, row('b', 1));
@@ -56,7 +59,7 @@ describe('view diff', () => {
       ['a', 2],
       ['c', 1],
     ]);
-    expect([...view.hashes.keys()]).toEqual(['a', 'c']);
+    expect([...view.rows.values()]).toEqual([row('a', 2), row('c', 1)]);
     expect(retry.size).toBe(0);
   });
 
@@ -67,7 +70,7 @@ describe('view diff', () => {
     applyRecheck(view, new Map([['a', 0]]), [row('a', 1, 25)], diff);
 
     expect(diff.updated).toEqual([row('a', 1, 25)]);
-    expect(view.hashes.get('a')).toBe(hashRow(row('a', 1, 25)));
+    expect(view.rows.get('a')).toEqual(row('a', 1, 25));
   });
 
   it('sends nothing for a row that did not change', () => {
@@ -82,7 +85,7 @@ describe('view diff', () => {
 
   it('keeps the held row when a lagging replica returns an older one', () => {
     const view = held();
-    view.ids.set('a', 5);
+    hold(view, row('a', 5));
     const diff = emptyDiff();
 
     applyRecheck(view, new Map([['a', 0]]), [row('a', 4, 99)], diff);
@@ -110,7 +113,7 @@ describe('view diff', () => {
 
     expect(diff.removed).toEqual(['a']);
     expect([...view.ids.keys()]).toEqual(['b']);
-    expect([...view.hashes.keys()]).toEqual(['b']);
+    expect([...view.rows.keys()]).toEqual(['b']);
     expect(view.sortKeys.get('item_price', 'a')).toBeUndefined();
   });
 
@@ -149,5 +152,27 @@ describe('view diff', () => {
       ['b', 1],
       ['c', 1],
     ]);
+  });
+
+  it('keeps the related ids of held rows, moving a row whose reference changed', () => {
+    const view = held();
+    const diff = emptyDiff();
+
+    applyRecheck(
+      view,
+      new Map([
+        ['a', 0],
+        ['b', 0],
+        ['c', 0],
+      ]),
+      [row('a', 2, 10, 'i-2'), row('c', 1, 10, 'i-2')],
+      diff,
+    );
+
+    expect([...view.refs.heldBy('item_id', 'i-1')]).toEqual([]);
+    expect([...view.refs.heldBy('item_id', 'i-2')].sort()).toEqual(['a', 'c']);
+    clearAll(view);
+    expect([...view.refs.heldBy('item_id', 'i-2')]).toEqual([]);
+    expect(view.rows.size).toBe(0);
   });
 });

@@ -12,11 +12,22 @@ import { ViewRegistry } from './view-registry.js';
 import { ViewService } from './view.service.js';
 import type { View, ViewEvent } from './view.js';
 
+const ordersOfItems = (ids: string[]) =>
+  sql`SELECT o.id FROM orders o WHERE o.item_id = ANY(${ids})`;
+
 const ordersDeps: Record<string, Dependency> = {
-  orders: { fields: ['item_id'] },
+  orders: { filter: ['item_id'] },
+  items: { filter: ['price'], link: ordersOfItems },
+};
+
+/** Orders filtered by item type, showing name and item price; rows hold item_id. */
+const viaDeps: Record<string, Dependency> = {
+  orders: { filter: ['item_id'], shown: ['name'] },
   items: {
-    fields: ['price'],
-    link: (ids) => sql`SELECT o.id FROM orders o WHERE o.item_id = ANY(${ids})`,
+    filter: ['type'],
+    shown: ['price'],
+    via: 'item_id',
+    link: ordersOfItems,
   },
 };
 
@@ -77,16 +88,27 @@ function setup() {
   const tick = new TickService(buffer, dependencies, registry, loader, views);
   vi.spyOn(tick['logger'], 'error').mockImplementation(() => undefined);
 
-  /** Opens a loaded view holding these ids, and collects what it sends. */
-  const open = (key: string, ids: Record<string, number> = {}) => {
+  /**
+   * Opens a loaded view holding these ids, and collects what it sends. With
+   * `via` dependencies, held rows carry the columns set in `db.columns`.
+   */
+  const open = (
+    key: string,
+    ids: Record<string, number> = {},
+    deps = ordersDeps,
+  ) => {
+    const via = Object.values(deps).flatMap((d) => (d.via ? [d.via] : []));
     const view = registry.open(
       key,
       'orders',
       toStatement(sql`SELECT o.id, o.version FROM orders o`),
+      {},
+      undefined,
+      via,
     );
-    dependencies.add(key, 'orders', ordersDeps);
+    dependencies.add(key, 'orders', deps);
     for (const [id, version] of Object.entries(ids)) {
-      hold(view, { id, version });
+      hold(view, { id, version, ...db.columns.get(id) });
     }
     view.loaded = true;
     const sent: ViewEvent[] = [];
@@ -202,6 +224,109 @@ describe('TickService', () => {
         },
       },
     ]);
+  });
+
+  describe('filter and shown changes', () => {
+    /** Orders a and b of item i-1, c of item i-2; every column as Postgres returns it. */
+    function items() {
+      const s = setup();
+      for (const [id, item] of [
+        ['a', 'i-1'],
+        ['b', 'i-1'],
+        ['c', 'i-2'],
+      ]) {
+        s.db.orderItem.set(id, item);
+        s.db.columns.set(id, { item_id: item });
+      }
+      const rechecks = () =>
+        s.db.queries.filter((q) => q.text.startsWith('SELECT q.*'));
+      const links = () =>
+        s.db.queries.filter((q) => q.text.includes('item_id = ANY'));
+      return { ...s, rechecks, links };
+    }
+
+    it('re-checks a shown change only in views that hold the order', async () => {
+      const { db, tick, open, change, rechecks } = items();
+      const holds = open('holds', { a: 1 }, viaDeps);
+      const other = open('other', { c: 1 }, viaDeps);
+      db.matching.set('a', 2).set('c', 1);
+      db.columns.set('a', { item_id: 'i-1', name: 'new name' });
+
+      change({
+        id: 'a',
+        version: 2,
+        changes: { old: { name: 'x' }, new: { name: 'new name' } },
+      });
+      await tick.tick();
+
+      expect(rechecks().map((q) => q.values.at(-1))).toEqual([['a']]);
+      expect(holds.sent[0].data).toMatchObject({
+        updated: [{ id: 'a', version: 2, name: 'new name' }],
+      });
+      expect(other.sent).toEqual([]);
+    });
+
+    it('finds the held orders of an item from memory for a shown change: no link query', async () => {
+      const { db, tick, open, change, rechecks, links } = items();
+      const { sent } = open('v', { a: 1, b: 1 }, viaDeps);
+      db.matching.set('a', 1).set('b', 1);
+      db.columns.set('a', { item_id: 'i-1', item_price: '20.00' });
+      db.columns.set('b', { item_id: 'i-1', item_price: '20.00' });
+
+      change({
+        type: 'items',
+        id: 'i-1',
+        changes: { old: { price: 10 }, new: { price: 20 } },
+      });
+      await tick.tick();
+
+      expect(links()).toEqual([]);
+      expect(
+        rechecks().map((q) => (q.values.at(-1) as string[]).sort()),
+      ).toEqual([['a', 'b']]);
+      expect(sent[0].data).toMatchObject({
+        updated: [
+          { id: 'a', item_price: '20.00' },
+          { id: 'b', item_price: '20.00' },
+        ],
+      });
+    });
+
+    it('runs the link for a filter change of an item, to find orders that may enter', async () => {
+      const { db, tick, open, change, links } = items();
+      const { sent } = open('v', { a: 1 }, viaDeps);
+      db.matching.set('a', 1).set('b', 1);
+
+      change({
+        type: 'items',
+        id: 'i-1',
+        changes: { old: { type: 'food' }, new: { type: 'book' } },
+      });
+      await tick.tick();
+
+      expect(links()).toHaveLength(1);
+      expect(sent[0].data).toMatchObject({ added: [{ id: 'b' }] });
+    });
+
+    it('treats a shown change as a filter change while the view is loading', async () => {
+      const { db, tick, open, change, links } = items();
+      const { view, sent } = open('v', {}, viaDeps);
+      view.loaded = false;
+      db.matching.set('a', 1);
+      db.columns.set('a', { item_id: 'i-1', item_price: '20.00' });
+
+      change({
+        type: 'items',
+        id: 'i-1',
+        changes: { old: { price: 10 }, new: { price: 20 } },
+      });
+      await tick.tick();
+      expect(links()).toHaveLength(1);
+
+      view.loaded = true;
+      await tick.tick();
+      expect(sent[0].data).toMatchObject({ added: [{ id: 'a' }] });
+    });
   });
 
   it('removes a deleted order without a query', async () => {

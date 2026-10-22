@@ -6,17 +6,34 @@ import type { Sql } from './sql.js';
 // Local stand-in for DependencyIndex from @atlas/view-engine (E-03), built from
 // the dependencies each query declares instead of a field registry.
 
-/** A view that depends on a related type, with the SQL that finds its own ids. */
+/**
+ * How a change can affect a view:
+ * - `filter`: it can add or remove rows, so ids the view doesn't hold matter too;
+ * - `shown`: only the rows the view already holds can change.
+ */
+export type Level = 'filter' | 'shown';
+
+/** A view of the event's own type. */
+export interface OwnCandidate {
+  viewKey: string;
+  level: Level;
+}
+
+/** A view that depends on the event's type as a related type. */
 export interface LinkedCandidate {
   viewKey: string;
+  level: Level;
+  /** Finds the view's ids linked to changed ids, for `filter` changes. */
   link: (ids: string[]) => Sql;
+  /** The view's column holding this type's id, to find held rows from memory. */
+  via?: string;
 }
 
 /** The views one change event may affect. */
 export interface Candidates {
   /** Views of the event's own type: re-check the event's id (or remove it on delete). */
-  own: string[];
-  /** Views of another type: run `link([evt.id])`, then re-check the ids it returns. */
+  own: OwnCandidate[];
+  /** Views of another type: re-check the held rows that show it, and for `filter`, run `link`. */
   linked: LinkedCandidate[];
 }
 
@@ -72,9 +89,9 @@ export class DependencyIndex {
   }
 
   /**
-   * The views this event may affect. False positives are fine, a missed
-   * view is not, so a delete, an insert or an undeclared field list
-   * always counts as a match.
+   * The views this event may affect, and how. False positives are fine, a
+   * missed view is not, so a delete, an insert or a field in neither list of
+   * a dependency without `filter` counts as a filter change.
    */
   candidates(evt: ChangeEvent): Candidates {
     const result: Candidates = { own: [], linked: [] };
@@ -84,21 +101,17 @@ export class DependencyIndex {
     }
     for (const [viewKey, dep] of views) {
       const entry = this.views.get(viewKey)!;
-      if (!touches(evt, dep)) {
+      const level = levelOf(evt, dep);
+      if (level === undefined) {
         continue;
       }
       if (entry.entityType === evt.type) {
-        result.own.push(viewKey);
+        result.own.push({ viewKey, level });
       } else {
-        result.linked.push({ viewKey, link: dep.link! });
+        result.linked.push({ viewKey, level, link: dep.link!, via: dep.via });
       }
     }
     return result;
-  }
-
-  /** Entity types that at least one view depends on: the streams to read. */
-  watchedTypes(): string[] {
-    return [...this.byType.keys()];
   }
 
   /** Every view that depends on this type, its own or a related one. */
@@ -106,20 +119,41 @@ export class DependencyIndex {
     return [...(this.byType.get(type)?.keys() ?? [])];
   }
 
+  /** Entity types that at least one view depends on: the streams to read. */
+  watchedTypes(): string[] {
+    return [...this.byType.keys()];
+  }
+
   dependenciesOf(viewKey: string): Record<string, Dependency> | undefined {
     return this.views.get(viewKey)?.dependsOn;
   }
 }
 
-function touches(evt: ChangeEvent, dep: Dependency): boolean {
-  if (evt.op === 'delete' || dep.fields === undefined || !evt.changes) {
-    return true;
+/** How the event affects a view with this dependency, or undefined if it can't. */
+function levelOf(evt: ChangeEvent, dep: Dependency): Level | undefined {
+  if (evt.op === 'delete' || !evt.changes) {
+    return 'filter';
   }
   const { old: before, new: after } = evt.changes;
   const isInsert =
     Object.keys(before).length === 0 && Object.keys(after).length > 0;
   if (isInsert) {
-    return true;
+    return 'filter';
   }
-  return dep.fields.some((field) => field in before || field in after);
+  const changed = Object.keys({ ...before, ...after });
+  const shown = dep.shown ?? [];
+  if (dep.filter === undefined) {
+    // Undeclared: every field not shown may be filtered on.
+    if (changed.length === 0 || changed.some((f) => !shown.includes(f))) {
+      return 'filter';
+    }
+    return 'shown';
+  }
+  if (changed.some((f) => dep.filter!.includes(f))) {
+    return 'filter';
+  }
+  if (changed.some((f) => shown.includes(f))) {
+    return 'shown';
+  }
+  return undefined;
 }

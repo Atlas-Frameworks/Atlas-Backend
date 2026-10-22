@@ -1,16 +1,38 @@
 import { defineQuery, type Dependency } from '../views/define-query.js';
 import { empty, sql, whereAll, type Sql } from '../views/sql.js';
 
+/** The order ids that use these items. */
+const ordersOfItems = (ids: string[]) =>
+  sql`SELECT o.id FROM orders o WHERE o.item_id = ANY(${ids})`;
+
 /**
- * Both queries filter on, or send, the order's name, item and customer and
- * the item's type and price. Every column sent must be listed here, or a
- * change to it isn't re-checked and clients don't get it.
+ * Every field a query filters on or sends is listed: `filter` if a change can
+ * add or remove rows, `shown` if it only changes rows the view holds. A
+ * field missing here is never re-checked, and clients don't get its changes.
  */
-const ordersDependsOn: Record<string, Dependency> = {
-  orders: { fields: ['name', 'item_id', 'customer_id'] },
+const orderFields: Dependency = {
+  filter: ['item_id', 'customer_id'],
+  shown: ['name'],
+};
+
+/** ordersSearch filters on the item's type and price (when those params are set). */
+const ordersSearchDependsOn: Record<string, Dependency> = {
+  orders: orderFields,
+  items: { filter: ['type', 'price'], via: 'item_id', link: ordersOfItems },
+};
+
+/**
+ * customerOrders filters on the item's type, but only sends its price: a
+ * price change re-checks the held orders of that item, found from memory,
+ * with no link query.
+ */
+const customerOrdersDependsOn: Record<string, Dependency> = {
+  orders: orderFields,
   items: {
-    fields: ['type', 'price'],
-    link: (ids) => sql`SELECT o.id FROM orders o WHERE o.item_id = ANY(${ids})`,
+    filter: ['type'],
+    shown: ['price'],
+    via: 'item_id',
+    link: ordersOfItems,
   },
 };
 
@@ -36,7 +58,7 @@ export interface OrdersSearchParams {
 export const ordersSearch = defineQuery({
   name: 'orders-search',
   entityType: 'orders',
-  dependsOn: ordersDependsOn,
+  dependsOn: ordersSearchDependsOn,
   ...orderSorting,
   build: (p: OrdersSearchParams) => {
     const where: Sql[] = [];
@@ -69,7 +91,7 @@ export interface CustomerOrdersParams {
 export const customerOrders = defineQuery({
   name: 'customer-orders',
   entityType: 'orders',
-  dependsOn: ordersDependsOn,
+  dependsOn: customerOrdersDependsOn,
   ...orderSorting,
   build: (p: CustomerOrdersParams) => sql`
     SELECT ${orderColumns}
