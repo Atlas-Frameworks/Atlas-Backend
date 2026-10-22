@@ -64,7 +64,7 @@ The required functions and triggers are installed by
 | --- | --- |
 | `benchmark_debezium.validate_entity_sequence()` | Requires a positive source sequence and rejects non-increasing updates |
 | `benchmark_debezium.capture_entity_change()` | Locks and increments the entity's sequence row, builds the diff, inserts the complete outbox event, then deletes that outbox row in the same transaction |
-| `public.build_entity_changes(old, new)` | Shared diff helper; excludes `id`, `sequence`, and `updated_at` |
+| `benchmark_debezium.build_entity_changes(old, new)` | Schema-local diff helper; excludes `id`, `sequence`, and `updated_at` |
 
 Every source table needs these two triggers:
 

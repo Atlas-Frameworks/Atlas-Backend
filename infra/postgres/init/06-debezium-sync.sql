@@ -1,5 +1,37 @@
 -- In-transaction sequence allocation and transient outbox used by Debezium.
 
+CREATE OR REPLACE FUNCTION benchmark_debezium.build_entity_changes(
+  p_old_row jsonb,
+  p_new_row jsonb
+)
+RETURNS jsonb
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  WITH rows AS (
+    SELECT
+      COALESCE(p_old_row, '{}'::jsonb) - ARRAY['id', 'sequence', 'updated_at'] AS old_row,
+      COALESCE(p_new_row, '{}'::jsonb) - ARRAY['id', 'sequence', 'updated_at'] AS new_row
+  ), changed_keys AS (
+    SELECT key
+    FROM rows,
+         LATERAL jsonb_object_keys(old_row || new_row) AS all_keys(key)
+    WHERE old_row -> key IS DISTINCT FROM new_row -> key
+  )
+  SELECT jsonb_build_object(
+    'old', COALESCE(
+      jsonb_object_agg(key, old_row -> key) FILTER (WHERE old_row ? key),
+      '{}'::jsonb
+    ),
+    'new', COALESCE(
+      jsonb_object_agg(key, new_row -> key) FILTER (WHERE new_row ? key),
+      '{}'::jsonb
+    )
+  )
+  FROM rows
+  LEFT JOIN changed_keys ON true;
+$$;
+
 CREATE TABLE IF NOT EXISTS benchmark_debezium.entity_type_sequence (
   entity_type text PRIMARY KEY,
   seq bigint NOT NULL DEFAULT 0 CHECK (seq >= 0)
@@ -72,7 +104,7 @@ BEGIN
       WHEN TG_OP = 'DELETE' THEN '{}'::jsonb
       ELSE jsonb_build_object(
         'sequence', entity_sequence,
-        'changes', public.build_entity_changes(old_row, new_row)
+        'changes', benchmark_debezium.build_entity_changes(old_row, new_row)
       )
     END;
 
@@ -147,6 +179,13 @@ CREATE TABLE IF NOT EXISTS benchmark_debezium.debezium_offsets (
   record_insert_seq integer NOT NULL
 );
 GRANT SELECT, INSERT, UPDATE, DELETE ON benchmark_debezium.debezium_offsets TO debezium;
+
+-- All synchronization behavior is now schema-local. These legacy shared
+-- functions are removed only after both pipelines have replaced their triggers.
+DROP FUNCTION IF EXISTS public.register_synced_table(regclass, text);
+DROP FUNCTION IF EXISTS public.sync_entity_change();
+DROP FUNCTION IF EXISTS public.validate_entity_sequence();
+DROP FUNCTION IF EXISTS public.build_entity_changes(jsonb, jsonb);
 
 DO $$
 BEGIN

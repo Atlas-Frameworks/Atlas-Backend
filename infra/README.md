@@ -32,8 +32,9 @@ The three database stages are deliberately separate:
 
 1. `infra:up` starts Docker and initializes only the database and service roles.
 2. `postgres:setup` creates `benchmark_publisher` and `benchmark_debezium`,
-   their commerce tables, and each pipeline's synchronization flow. `public`
-   contains shared technical functions and the Publisher registry only.
+   their commerce tables, and each pipeline's synchronization flow. Synchronization
+   functions and state stay inside their owning schema; `public` contains none
+   of the Publisher or Debezium business functions.
 3. `postgres:seed` inserts one batch with identical IDs and business values
    into both schemas.
 
@@ -115,9 +116,11 @@ writes those events into the shared streams
 `changes:distributors`.
 
 Register a new Publisher application table in its migration with
-`SELECT register_synced_table('benchmark_publisher.table_name');`. It must have
-`id uuid` and non-null `sequence bigint` columns. Registration adds `updated_at`, creates the entity-specific
-outbox and generic triggers, and registers the entity's independent sequence.
+`SELECT benchmark_publisher.register_synced_table('benchmark_publisher.table_name');`.
+It must have
+`id uuid` and non-null `sequence bigint` columns. Registration adds `updated_at`,
+creates the entity-specific outbox and single-row state table, and attaches the
+generic triggers. The outbox stores the source identifier in `entity_id`.
 
 Redis Streams do not require a separate Redis mode or pre-created stream. A
 stream is created by its first write, for example:

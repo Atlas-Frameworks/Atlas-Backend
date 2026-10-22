@@ -2,7 +2,7 @@
 -- durable, entity-specific outbox. Sequence allocation happens after commit in
 -- the publisher and never blocks the business transaction.
 
-CREATE OR REPLACE FUNCTION build_entity_changes(
+CREATE OR REPLACE FUNCTION benchmark_publisher.build_entity_changes(
   p_old_row jsonb,
   p_new_row jsonb
 )
@@ -34,7 +34,7 @@ AS $$
   LEFT JOIN changed_keys ON true;
 $$;
 
-CREATE OR REPLACE FUNCTION validate_entity_sequence()
+CREATE OR REPLACE FUNCTION benchmark_publisher.validate_entity_sequence()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
@@ -53,7 +53,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION sync_entity_change()
+CREATE OR REPLACE FUNCTION benchmark_publisher.sync_entity_change()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
@@ -72,7 +72,7 @@ BEGIN
   END;
 
   EXECUTE format(
-    'INSERT INTO %s (aggregate_id, payload) VALUES ($1, $2)',
+    'INSERT INTO %s (entity_id, payload) VALUES ($1, $2)',
     resolved_outbox_table
   ) USING
     entity_id::text,
@@ -86,14 +86,14 @@ BEGIN
       WHEN TG_OP = 'DELETE' THEN '{}'::jsonb
       ELSE jsonb_build_object(
         'sequence', entity_sequence,
-        'changes', build_entity_changes(old_row, new_row)
+        'changes', benchmark_publisher.build_entity_changes(old_row, new_row)
       )
     END;
   RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION register_synced_table(
+CREATE OR REPLACE FUNCTION benchmark_publisher.register_synced_table(
   p_table regclass,
   p_entity_type text DEFAULT NULL
 )
@@ -105,8 +105,11 @@ DECLARE
   table_name text;
   resolved_entity_type text;
   outbox_name text;
+  state_name text;
   qualified_outbox_name text;
+  qualified_state_name text;
   outbox_table regclass;
+  migrated_last_sequence bigint := 0;
 BEGIN
   SELECT namespace.nspname, class.relname
   INTO schema_name, table_name
@@ -118,10 +121,22 @@ BEGIN
   IF table_name IS NULL THEN
     RAISE EXCEPTION '% is not a table', p_table;
   END IF;
+  IF schema_name <> 'benchmark_publisher' THEN
+    RAISE EXCEPTION 'Publisher table % must belong to benchmark_publisher', p_table;
+  END IF;
 
   resolved_entity_type := COALESCE(p_entity_type, table_name);
   outbox_name := table_name || '_outbox';
+  state_name := resolved_entity_type || '_sync_state';
   qualified_outbox_name := format('%I.%I', schema_name, outbox_name);
+  qualified_state_name := format('%I.%I', schema_name, state_name);
+
+  IF NULLIF(btrim(resolved_entity_type), '') IS NULL THEN
+    RAISE EXCEPTION 'Synchronized entity type must not be empty';
+  END IF;
+  IF octet_length(state_name) > 63 THEN
+    RAISE EXCEPTION 'Synchronization state table name % exceeds 63 bytes', state_name;
+  END IF;
 
   IF NOT EXISTS (
     SELECT 1
@@ -162,7 +177,7 @@ BEGIN
   EXECUTE format(
     'CREATE TABLE IF NOT EXISTS %s (
        event_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-       aggregate_id text NOT NULL,
+       entity_id text NOT NULL,
        payload jsonb NOT NULL,
        event_sequence bigint UNIQUE,
        published_at timestamptz,
@@ -170,6 +185,24 @@ BEGIN
      )',
     qualified_outbox_name
   );
+  IF EXISTS (
+    SELECT 1
+    FROM pg_attribute
+    WHERE attrelid = qualified_outbox_name::regclass
+      AND attname = 'aggregate_id'
+      AND NOT attisdropped
+  ) AND NOT EXISTS (
+    SELECT 1
+    FROM pg_attribute
+    WHERE attrelid = qualified_outbox_name::regclass
+      AND attname = 'entity_id'
+      AND NOT attisdropped
+  ) THEN
+    EXECUTE format(
+      'ALTER TABLE %s RENAME COLUMN aggregate_id TO entity_id',
+      qualified_outbox_name
+    );
+  END IF;
   EXECUTE format(
     'CREATE INDEX IF NOT EXISTS %I ON %s (event_sequence NULLS FIRST, event_id)
      WHERE published_at IS NULL',
@@ -179,24 +212,61 @@ BEGIN
   EXECUTE format('GRANT INSERT ON %s TO atlas_writer', qualified_outbox_name);
   outbox_table := qualified_outbox_name::regclass;
 
-  INSERT INTO synchronized_entity_types (entity_type, source_table, outbox_table)
-  VALUES (resolved_entity_type, p_table, outbox_table)
-  ON CONFLICT (entity_type) DO UPDATE
-  SET source_table = EXCLUDED.source_table,
-      outbox_table = EXCLUDED.outbox_table;
+  -- Preserve typeSeq when upgrading from the former public registry. The outbox
+  -- maximum also protects an interrupted migration with already-claimed rows.
+  IF to_regclass('public.synchronized_entity_types') IS NOT NULL THEN
+    EXECUTE
+      'SELECT registry.last_sequence
+       FROM public.synchronized_entity_types AS registry
+       WHERE registry.entity_type = $1'
+    INTO migrated_last_sequence
+    USING resolved_entity_type;
+  END IF;
+  EXECUTE format(
+    'SELECT GREATEST($1, COALESCE(max(event_sequence), 0)) FROM %s',
+    outbox_table
+  )
+  INTO migrated_last_sequence
+  USING COALESCE(migrated_last_sequence, 0);
+
+  EXECUTE format(
+    'CREATE TABLE IF NOT EXISTS %s (
+       singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+       source_table regclass NOT NULL UNIQUE,
+       outbox_table regclass NOT NULL UNIQUE,
+       last_sequence bigint NOT NULL DEFAULT 0 CHECK (last_sequence >= 0),
+       publisher_owner text,
+       publisher_lease_until timestamptz
+     )',
+    qualified_state_name
+  );
+  EXECUTE format(
+    'INSERT INTO %s (singleton, source_table, outbox_table, last_sequence)
+     VALUES (true, $1, $2, $3)
+     ON CONFLICT (singleton) DO UPDATE
+     SET source_table = EXCLUDED.source_table,
+         outbox_table = EXCLUDED.outbox_table,
+         last_sequence = GREATEST(%I.last_sequence, EXCLUDED.last_sequence)',
+    qualified_state_name,
+    state_name
+  ) USING p_table, outbox_table, migrated_last_sequence;
+  EXECUTE format(
+    'GRANT SELECT ON %s TO atlas_reader, atlas_publisher',
+    qualified_state_name
+  );
 
   EXECUTE format('DROP TRIGGER IF EXISTS atlas_manage_version ON %I.%I', schema_name, table_name);
   EXECUTE format('DROP TRIGGER IF EXISTS atlas_validate_sequence ON %I.%I', schema_name, table_name);
   EXECUTE format('DROP TRIGGER IF EXISTS atlas_sync_change ON %I.%I', schema_name, table_name);
   EXECUTE format(
     'CREATE TRIGGER atlas_validate_sequence BEFORE INSERT OR UPDATE ON %I.%I '
-    'FOR EACH ROW EXECUTE FUNCTION validate_entity_sequence()',
+    'FOR EACH ROW EXECUTE FUNCTION benchmark_publisher.validate_entity_sequence()',
     schema_name,
     table_name
   );
   EXECUTE format(
     'CREATE TRIGGER atlas_sync_change AFTER INSERT OR UPDATE OR DELETE ON %I.%I '
-    'FOR EACH ROW EXECUTE FUNCTION sync_entity_change(%L, %L)',
+    'FOR EACH ROW EXECUTE FUNCTION benchmark_publisher.sync_entity_change(%L, %L)',
     schema_name,
     table_name,
     resolved_entity_type,

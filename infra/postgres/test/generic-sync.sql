@@ -4,39 +4,45 @@ BEGIN;
 
 DO $$
 BEGIN
+  ASSERT to_regprocedure('public.build_entity_changes(jsonb,jsonb)') IS NULL,
+    'public must not contain synchronization diff functions';
+  ASSERT to_regprocedure('public.register_synced_table(regclass,text)') IS NULL,
+    'public must not contain Publisher registration functions';
   ASSERT has_function_privilege(
     'atlas_publisher',
-    'claim_sync_events(text,text,integer,integer)',
+    'benchmark_publisher.claim_sync_events(text,text,integer,integer)',
     'EXECUTE'
   ), 'publisher role must be allowed to claim events';
   ASSERT NOT has_function_privilege(
     'atlas_writer',
-    'claim_sync_events(text,text,integer,integer)',
+    'benchmark_publisher.claim_sync_events(text,text,integer,integer)',
     'EXECUTE'
   ), 'writer role must not be allowed to claim events';
 END;
 $$;
 
-CREATE TABLE publisher_test_entities (
+CREATE TABLE benchmark_publisher.publisher_test_entities (
   id uuid PRIMARY KEY,
   label text NOT NULL,
   enabled boolean NOT NULL,
   sequence bigint NOT NULL
 );
-SELECT register_synced_table('public.publisher_test_entities');
+SELECT benchmark_publisher.register_synced_table(
+  'benchmark_publisher.publisher_test_entities'
+);
 
-INSERT INTO publisher_test_entities (id, label, enabled, sequence)
+INSERT INTO benchmark_publisher.publisher_test_entities (id, label, enabled, sequence)
 VALUES ('00000000-0000-0000-0000-000000000102', 'first', true, 1);
 
-UPDATE publisher_test_entities
+UPDATE benchmark_publisher.publisher_test_entities
 SET label = 'second', sequence = 10
 WHERE id = '00000000-0000-0000-0000-000000000102';
 
-UPDATE publisher_test_entities
+UPDATE benchmark_publisher.publisher_test_entities
 SET label = 'second', sequence = 11
 WHERE id = '00000000-0000-0000-0000-000000000102';
 
-DELETE FROM publisher_test_entities
+DELETE FROM benchmark_publisher.publisher_test_entities
 WHERE id = '00000000-0000-0000-0000-000000000102';
 
 DO $$
@@ -46,12 +52,12 @@ DECLARE
   no_op_event jsonb;
   delete_event jsonb;
 BEGIN
-  SELECT payload INTO insert_event FROM publisher_test_entities_outbox WHERE event_id = 1;
-  SELECT payload INTO update_event FROM publisher_test_entities_outbox WHERE event_id = 2;
-  SELECT payload INTO no_op_event FROM publisher_test_entities_outbox WHERE event_id = 3;
-  SELECT payload INTO delete_event FROM publisher_test_entities_outbox WHERE event_id = 4;
+  SELECT payload INTO insert_event FROM benchmark_publisher.publisher_test_entities_outbox WHERE event_id = 1;
+  SELECT payload INTO update_event FROM benchmark_publisher.publisher_test_entities_outbox WHERE event_id = 2;
+  SELECT payload INTO no_op_event FROM benchmark_publisher.publisher_test_entities_outbox WHERE event_id = 3;
+  SELECT payload INTO delete_event FROM benchmark_publisher.publisher_test_entities_outbox WHERE event_id = 4;
 
-  ASSERT (SELECT count(*) FROM publisher_test_entities_outbox) = 4,
+  ASSERT (SELECT count(*) FROM benchmark_publisher.publisher_test_entities_outbox) = 4,
     'expected four durable events';
   ASSERT NOT insert_event ? 'typeSeq',
     'business writes must not allocate typeSeq';
@@ -82,7 +88,12 @@ END;
 $$;
 
 CREATE TEMP TABLE claimed_test_events AS
-SELECT * FROM claim_sync_events('publisher_test_entities', 'publisher-a', 100, 30);
+SELECT * FROM benchmark_publisher.claim_sync_events(
+  'publisher_test_entities',
+  'publisher-a',
+  100,
+  30
+);
 
 DO $$
 BEGIN
@@ -91,22 +102,33 @@ BEGIN
   ASSERT (SELECT array_agg((payload ->> 'typeSeq')::bigint ORDER BY event_id)
           FROM claimed_test_events) = ARRAY[1, 2, 3, 4]::bigint[],
     'publisher must allocate a gapless batch sequence';
-  ASSERT (SELECT last_sequence FROM synchronized_entity_types
-          WHERE entity_type = 'publisher_test_entities') = 4,
-    'registry must persist the allocated sequence';
+  ASSERT (SELECT last_sequence
+          FROM benchmark_publisher.publisher_test_entities_sync_state
+          WHERE singleton) = 4,
+    'entity state table must persist the allocated sequence';
   ASSERT NOT EXISTS (
-    SELECT 1 FROM claim_sync_events('publisher_test_entities', 'publisher-b', 100, 30)
+    SELECT 1 FROM benchmark_publisher.claim_sync_events(
+      'publisher_test_entities',
+      'publisher-b',
+      100,
+      30
+    )
   ), 'another publisher must not take over an active lease';
-  ASSERT mark_sync_events_published(
+  ASSERT benchmark_publisher.mark_sync_events_published(
     'publisher_test_entities',
     'publisher-a',
     ARRAY(SELECT event_id FROM claimed_test_events)
   ) = 4, 'publisher must delete its published events';
   ASSERT NOT EXISTS (
-    SELECT 1 FROM claim_sync_events('publisher_test_entities', 'publisher-a', 100, 30)
+    SELECT 1 FROM benchmark_publisher.claim_sync_events(
+      'publisher_test_entities',
+      'publisher-a',
+      100,
+      30
+    )
   ), 'published events must not be claimed again';
   ASSERT NOT EXISTS (
-    SELECT 1 FROM publisher_test_entities_outbox
+    SELECT 1 FROM benchmark_publisher.publisher_test_entities_outbox
   ), 'published events must not remain in the outbox';
 END;
 $$;

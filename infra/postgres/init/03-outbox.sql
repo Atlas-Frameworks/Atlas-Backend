@@ -9,18 +9,17 @@ BEGIN
 END;
 $$;
 
-CREATE TABLE IF NOT EXISTS synchronized_entity_types (
-  entity_type           text PRIMARY KEY,
-  source_table          regclass NOT NULL UNIQUE,
-  outbox_table          regclass NOT NULL UNIQUE,
-  last_sequence         bigint NOT NULL DEFAULT 0 CHECK (last_sequence >= 0),
-  publisher_owner       text,
-  publisher_lease_until timestamptz
-);
+-- Remove the old signatures before creating the schema-aware functions. Leaving
+-- them installed would keep the legacy public registry callable by mistake.
+DROP FUNCTION IF EXISTS public.claim_sync_events(text, text, integer, integer);
+DROP FUNCTION IF EXISTS public.mark_sync_events_published(text, text, bigint[]);
+DROP FUNCTION IF EXISTS public.claim_sync_events(text, text, text, integer, integer);
+DROP FUNCTION IF EXISTS public.mark_sync_events_published(text, text, text, bigint[]);
 
--- Publishers access entity-specific outboxes only through SECURITY DEFINER
--- functions, so they cannot mutate application tables or arbitrary events.
-CREATE OR REPLACE FUNCTION claim_sync_events(
+-- Every entity owns a <entity_type>_sync_state table in its source schema.
+-- Publishers access state and outboxes only through SECURITY DEFINER functions,
+-- so they cannot mutate application tables or arbitrary events.
+CREATE OR REPLACE FUNCTION benchmark_publisher.claim_sync_events(
   p_entity_type text,
   p_publisher_owner text,
   p_batch_size integer,
@@ -28,14 +27,15 @@ CREATE OR REPLACE FUNCTION claim_sync_events(
 )
 RETURNS TABLE (
   event_id bigint,
-  aggregate_id text,
+  entity_id text,
   payload jsonb
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, benchmark_publisher
 AS $$
 DECLARE
+  state_table regclass;
   outbox_table regclass;
   current_sequence bigint;
   current_owner text;
@@ -52,27 +52,37 @@ BEGIN
     RAISE EXCEPTION 'Publisher owner must not be empty';
   END IF;
 
-  SELECT
-    registry.outbox_table,
-    registry.last_sequence,
-    registry.publisher_owner,
-    registry.publisher_lease_until
-  INTO outbox_table, current_sequence, current_owner, lease_until
-  FROM synchronized_entity_types AS registry
-  WHERE registry.entity_type = p_entity_type
-  FOR UPDATE;
+  state_table := to_regclass(format('%I.%I', 'benchmark_publisher', p_entity_type || '_sync_state'));
+  IF state_table IS NULL THEN
+    RAISE EXCEPTION 'Unknown synchronized entity type benchmark_publisher.%', p_entity_type;
+  END IF;
+
+  EXECUTE format(
+    'SELECT state.outbox_table,
+            state.last_sequence,
+            state.publisher_owner,
+            state.publisher_lease_until
+     FROM %s AS state
+     WHERE state.singleton
+     FOR UPDATE',
+    state_table
+  )
+  INTO outbox_table, current_sequence, current_owner, lease_until;
 
   IF outbox_table IS NULL THEN
-    RAISE EXCEPTION 'Unknown synchronized entity type: %', p_entity_type;
+    RAISE EXCEPTION 'Synchronization state is missing for benchmark_publisher.%', p_entity_type;
   END IF;
   IF current_owner IS DISTINCT FROM p_publisher_owner AND lease_until > clock_timestamp() THEN
     RETURN;
   END IF;
 
-  UPDATE synchronized_entity_types
-  SET publisher_owner = p_publisher_owner,
-      publisher_lease_until = clock_timestamp() + make_interval(secs => p_lease_seconds)
-  WHERE entity_type = p_entity_type;
+  EXECUTE format(
+    'UPDATE %s
+     SET publisher_owner = $1,
+         publisher_lease_until = clock_timestamp() + make_interval(secs => $2)
+     WHERE singleton',
+    state_table
+  ) USING p_publisher_owner, p_lease_seconds;
 
   EXECUTE format(
     'WITH selected AS MATERIALIZED (
@@ -101,13 +111,16 @@ BEGIN
   INTO assigned_count
   USING p_batch_size, current_sequence;
 
-  UPDATE synchronized_entity_types
-  SET last_sequence = current_sequence + assigned_count
-  WHERE entity_type = p_entity_type;
+  EXECUTE format(
+    'UPDATE %s
+     SET last_sequence = $1
+     WHERE singleton',
+    state_table
+  ) USING current_sequence + assigned_count;
 
   RETURN QUERY EXECUTE format(
     'SELECT pending.event_id,
-            pending.aggregate_id,
+            pending.entity_id,
             pending.payload || jsonb_build_object(''typeSeq'', pending.event_sequence)
      FROM %s AS pending
      WHERE pending.published_at IS NULL
@@ -118,7 +131,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION mark_sync_events_published(
+CREATE OR REPLACE FUNCTION benchmark_publisher.mark_sync_events_published(
   p_entity_type text,
   p_publisher_owner text,
   p_event_ids bigint[]
@@ -126,24 +139,35 @@ CREATE OR REPLACE FUNCTION mark_sync_events_published(
 RETURNS integer
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, benchmark_publisher
 AS $$
 DECLARE
+  state_table regclass;
   outbox_table regclass;
   active_owner text;
   updated_count integer;
 BEGIN
-  SELECT registry.outbox_table, registry.publisher_owner
-  INTO outbox_table, active_owner
-  FROM synchronized_entity_types AS registry
-  WHERE registry.entity_type = p_entity_type
-  FOR UPDATE;
+  state_table := to_regclass(format('%I.%I', 'benchmark_publisher', p_entity_type || '_sync_state'));
+  IF state_table IS NULL THEN
+    RAISE EXCEPTION 'Unknown synchronized entity type benchmark_publisher.%', p_entity_type;
+  END IF;
+
+  EXECUTE format(
+    'SELECT state.outbox_table, state.publisher_owner
+     FROM %s AS state
+     WHERE state.singleton
+     FOR UPDATE',
+    state_table
+  )
+  INTO outbox_table, active_owner;
 
   IF outbox_table IS NULL THEN
-    RAISE EXCEPTION 'Unknown synchronized entity type: %', p_entity_type;
+    RAISE EXCEPTION 'Synchronization state is missing for benchmark_publisher.%', p_entity_type;
   END IF;
   IF active_owner IS DISTINCT FROM p_publisher_owner THEN
-    RAISE EXCEPTION 'Publisher % does not own entity type %', p_publisher_owner, p_entity_type;
+    RAISE EXCEPTION 'Publisher % does not own entity type benchmark_publisher.%',
+      p_publisher_owner,
+      p_entity_type;
   END IF;
 
   EXECUTE format(
@@ -157,9 +181,7 @@ BEGIN
 END;
 $$;
 
-GRANT SELECT ON synchronized_entity_types TO atlas_reader;
-GRANT SELECT ON synchronized_entity_types TO atlas_publisher;
-REVOKE ALL ON FUNCTION claim_sync_events(text, text, integer, integer) FROM PUBLIC;
-REVOKE ALL ON FUNCTION mark_sync_events_published(text, text, bigint[]) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION claim_sync_events(text, text, integer, integer) TO atlas_publisher;
-GRANT EXECUTE ON FUNCTION mark_sync_events_published(text, text, bigint[]) TO atlas_publisher;
+REVOKE ALL ON FUNCTION benchmark_publisher.claim_sync_events(text, text, integer, integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION benchmark_publisher.mark_sync_events_published(text, text, bigint[]) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION benchmark_publisher.claim_sync_events(text, text, integer, integer) TO atlas_publisher;
+GRANT EXECUTE ON FUNCTION benchmark_publisher.mark_sync_events_published(text, text, bigint[]) TO atlas_publisher;

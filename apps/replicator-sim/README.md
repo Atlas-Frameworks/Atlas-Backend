@@ -66,7 +66,7 @@ are expected because updates to other types consume values too.
 Register a new table in its migration with:
 
 ```sql
-SELECT register_synced_table('benchmark_publisher.my_new_table');
+SELECT benchmark_publisher.register_synced_table('benchmark_publisher.my_new_table');
 ```
 
 The table must have `id uuid` and non-null `sequence bigint` columns. See

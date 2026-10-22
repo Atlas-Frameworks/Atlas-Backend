@@ -89,35 +89,36 @@ CREATE TABLE benchmark_publisher.items (
 );
 ```
 
-The shared Publisher infrastructure is installed in `public` by
+All Publisher functions are installed in `benchmark_publisher` by
 `infra/postgres/init/03-outbox.sql` and
 `infra/postgres/init/04-commerce-sync.sql`:
 
 | Object | Responsibility |
 | --- | --- |
-| `synchronized_entity_types` | Registry, independent sequence state and publisher lease for every entity type |
-| `build_entity_changes(old, new)` | Builds the business-field diff and excludes `id`, `sequence`, and `updated_at` |
-| `validate_entity_sequence()` | Requires a positive source sequence and rejects non-increasing updates |
-| `sync_entity_change()` | Appends the raw event to the entity-specific durable outbox in the business transaction |
-| `register_synced_table()` | Creates the outbox, grants permissions, registers the type and attaches both triggers |
-| `claim_sync_events()` | Claims a batch under a lease and assigns `typeSeq` values after commit |
-| `mark_sync_events_published()` | Deletes rows only after Redis accepted the batch |
+| `<schema>.<entity>_sync_state` | Single-row, entity-local `typeSeq` and publisher lease state |
+| `benchmark_publisher.build_entity_changes(old, new)` | Builds the business-field diff and excludes `id`, `sequence`, and `updated_at` |
+| `benchmark_publisher.validate_entity_sequence()` | Requires a positive source sequence and rejects non-increasing updates |
+| `benchmark_publisher.sync_entity_change()` | Appends the raw event to the entity-specific durable outbox in the business transaction |
+| `benchmark_publisher.register_synced_table()` | Creates the outbox and state table, grants permissions, and attaches both triggers |
+| `benchmark_publisher.claim_sync_events()` | Claims a batch under a lease and assigns `typeSeq` values after commit |
+| `benchmark_publisher.mark_sync_events_published()` | Deletes rows only after Redis accepted the batch |
 
 Register each table once after creating it:
 
 ```sql
-SELECT public.register_synced_table(
+SELECT benchmark_publisher.register_synced_table(
   'benchmark_publisher.items'::regclass,
   'items'
 );
 ```
 
-Registration creates `benchmark_publisher.items_outbox` with this logical
-shape:
+Registration creates `benchmark_publisher.items_sync_state`, containing one
+row for the `items` sequence and lease, and
+`benchmark_publisher.items_outbox` with this logical shape:
 
 ```sql
 event_id       bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-aggregate_id   text NOT NULL,
+entity_id      text NOT NULL,
 payload        jsonb NOT NULL,
 event_sequence bigint UNIQUE,
 published_at   timestamptz,
@@ -127,8 +128,8 @@ created_at     timestamptz NOT NULL DEFAULT clock_timestamp()
 It also creates these triggers on the source table:
 
 ```text
-atlas_validate_sequence BEFORE INSERT OR UPDATE -> public.validate_entity_sequence()
-atlas_sync_change     AFTER INSERT OR UPDATE OR DELETE -> public.sync_entity_change(...)
+atlas_validate_sequence BEFORE INSERT OR UPDATE -> benchmark_publisher.validate_entity_sequence()
+atlas_sync_change     AFTER INSERT OR UPDATE OR DELETE -> benchmark_publisher.sync_entity_change(...)
 ```
 
 Do not allocate `typeSeq` in the entity transaction for this pipeline. The
@@ -137,9 +138,9 @@ it when the Publisher claims a committed batch. A separate outbox and publish
 loop per entity type prevents one busy entity type from blocking the others.
 
 The `atlas_writer` role needs write access to source tables and insert access
-to their outboxes. `atlas_publisher` needs only the granted registry reads and
-execution rights on the claim/acknowledgement functions; it does not need to
-write application tables directly.
+to their outboxes. `atlas_publisher` reads the state table in the selected
+source schema and has execution rights on the claim/acknowledgement functions;
+it does not need to write application tables directly.
 
 The repository's complete setup and registration examples are in:
 
