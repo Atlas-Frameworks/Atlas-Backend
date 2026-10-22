@@ -35,6 +35,7 @@ interface Params {
   minPrice?: number;
   /** Part of the SQL: by name (default), or price descending then name. */
   orderBy?: 'name' | 'price';
+  customerId?: string;
 }
 
 const columns = sql`
@@ -47,6 +48,9 @@ function ordersQuery(
   name: string,
   orders: Dependency,
   items: Omit<Dependency, 'link'>,
+  match = (p: Params): Record<string, unknown> => ({
+    customer_id: p.customerId,
+  }),
 ): QueryDefinition<Params> {
   const dependsOn: Record<string, Dependency> = {
     orders,
@@ -56,8 +60,12 @@ function ordersQuery(
     name,
     entityType: 'orders',
     dependsOn,
+    match,
     build: (p: Params) => {
       const where: Sql[] = [];
+      if (p.customerId !== undefined) {
+        where.push(sql`o.customer_id = ${p.customerId}`);
+      }
       if (p.types !== undefined) {
         where.push(sql`i.type = ANY(${p.types})`);
       }
@@ -74,29 +82,47 @@ function ordersQuery(
   });
 }
 
-/** The item's type and price are filtered on; the order's name and customer only shown. */
-const correct = ordersQuery(
-  'incremental-spec',
-  { filter: ['item_id'], shown: ['name', 'customer_id'] },
-  { filter: ['type', 'price'], via: 'item_id' },
-);
+/**
+ * Filters on the order's item and customer (customer by `match` too) and the
+ * item's type and price; the order's name is only shown.
+ */
+const orderFields: Dependency = {
+  filter: ['item_id', 'customer_id'],
+  shown: ['name'],
+};
+const correct = ordersQuery('incremental-spec', orderFields, {
+  filter: ['type', 'price'],
+  via: 'item_id',
+});
 /** The same without `via`: shown changes of items go through the link query. */
-const withoutVia = ordersQuery(
-  'incremental-spec-no-via',
-  { filter: ['item_id'], shown: ['name', 'customer_id'] },
-  { filter: ['type', 'price'] },
+const withoutVia = ordersQuery('incremental-spec-no-via', orderFields, {
+  filter: ['type', 'price'],
+});
+/** The same without `match`: every own-type filter change is re-checked. */
+const withoutMatch = ordersQuery(
+  'incremental-spec-no-match',
+  orderFields,
+  { filter: ['type', 'price'], via: 'item_id' },
+  () => ({}),
 );
 /** Shows `name` but doesn't declare it: name changes are never re-checked. */
 const missingName = ordersQuery(
   'incremental-spec-missing-name',
-  { filter: ['item_id'], shown: ['customer_id'] },
+  { filter: ['item_id', 'customer_id'] },
   { filter: ['type', 'price'], via: 'item_id' },
 );
 /** Declares price as shown, though minPrice filters on it: orders never enter on a price change. */
-const priceAsShown = ordersQuery(
-  'incremental-spec-price-shown',
-  { filter: ['item_id'], shown: ['name', 'customer_id'] },
-  { filter: ['type'], shown: ['price'], via: 'item_id' },
+const priceAsShown = ordersQuery('incremental-spec-price-shown', orderFields, {
+  filter: ['type'],
+  shown: ['price'],
+  via: 'item_id',
+});
+/** A match that disagrees with the SQL: the customer's own new orders are skipped. */
+const wrongMatch = ordersQuery(
+  'incremental-spec-wrong-match',
+  orderFields,
+  { filter: ['type', 'price'], via: 'item_id' },
+  (p) => ({ customer_id: p.customerId === undefined ? undefined : 'c-0' }),
 );
 
 interface Item {
@@ -243,7 +269,8 @@ class World {
       const item = this.items.get(o.item_id)!;
       return (
         (p.types === undefined || p.types.includes(item.type)) &&
-        (p.minPrice === undefined || item.price >= p.minPrice)
+        (p.minPrice === undefined || item.price >= p.minPrice) &&
+        (p.customerId === undefined || o.customer_id === p.customerId)
       );
     });
   }
@@ -378,6 +405,8 @@ async function run(
     { types: ['book'], orderBy: 'price' },
     { minPrice: 60 },
     { orderBy: 'price' },
+    { customerId: 'c-1' },
+    { customerId: 'c-2', types: ['book'], orderBy: 'price' },
   ] as Params[]) {
     world.register(query, params);
     const opened = await views.open(query, params, { limit: 1 });
@@ -499,6 +528,18 @@ describe('incremental vs full', () => {
       expect(await run(withoutVia, seed, 150)).toBeUndefined();
     },
   );
+
+  it.each([1, 2, 3])('is also exact without match (seed %i)', async (seed) => {
+    expect(await run(withoutMatch, seed, 150)).toBeUndefined();
+  });
+
+  it('catches a match that disagrees with the SQL', async () => {
+    const mismatches = await Promise.all(
+      [1, 2, 3].map((seed) => run(wrongMatch, seed, 150)),
+    );
+
+    expect(mismatches.some((m) => m !== undefined)).toBe(true);
+  });
 
   it('catches a filter field declared as shown', async () => {
     const mismatches = await Promise.all(

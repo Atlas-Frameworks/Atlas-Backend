@@ -143,6 +143,16 @@ describe('DependencyIndex', () => {
     ).toContainEqual({ viewKey: 'items-only', level: 'filter' });
   });
 
+  it('passes the match of a view with its own-type candidates', () => {
+    index.add('customer-x', 'orders', ordersDeps, { customer_id: 'X' });
+
+    expect(index.candidates(event('orders', update('item_id'))).own).toEqual([
+      { viewKey: 'orders-view', level: 'filter' },
+      { viewKey: 'customer-x', level: 'filter', match: { customer_id: 'X' } },
+    ]);
+    expect(index.matchOf('customer-x')).toEqual({ customer_id: 'X' });
+  });
+
   it('ignores types nobody depends on', () => {
     expect(index.candidates(event('suppliers', update('name')))).toEqual({
       own: [],

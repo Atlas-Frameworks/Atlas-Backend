@@ -54,6 +54,7 @@ export class ViewsController {
           seq: window.seq,
         })),
         orderBy: orderName(view.order),
+        match: this.dependencies.matchOf(view.viewKey) ?? null,
         dependsOn: describe(this.dependencies.dependenciesOf(view.viewKey)),
       })),
     };
@@ -185,6 +186,8 @@ export interface ViewsDebug {
     }[];
     /** The query's ORDER BY, or "id". */
     orderBy: string;
+    /** Exact-match conditions on the view's own type, or null. */
+    match: Readonly<Record<string, unknown>> | null;
     dependsOn: Record<string, DependencyDebug>;
   }[];
 }

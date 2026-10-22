@@ -17,6 +17,15 @@ export interface QueryDefinition<P> {
    */
   dependsOn: Record<string, Dependency>;
   /**
+   * Exact-match conditions the SQL applies to `entityType`, from the params,
+   * e.g. `(p) => ({ customer_id: p.customerId })` for
+   * `WHERE o.customer_id = ${p.customerId}`. Keys are the entity's field
+   * names, as in change events. A change whose entity is known not to match
+   * needs no query for this view; an undefined value adds no condition.
+   * Must agree with the SQL: a condition the SQL doesn't apply hides rows.
+   */
+  match?: (params: P) => Record<string, unknown>;
+  /**
    * The query's SQL for these params. To give it an order, wrap the SELECT in
    * `ordered(…)`: the ORDER BY is then part of the SQL, and the view keeps
    * its rows in that order. Without it, rows are ordered by id.
@@ -88,7 +97,9 @@ export function defineQuery<P>(def: QueryDefinition<P>): QueryDefinition<P> {
 }
 
 /** The `via` columns of the query's dependencies. */
-export function viaColumnsOf(def: QueryDefinition<unknown>): string[] {
+export function viaColumnsOf(def: {
+  dependsOn: Record<string, Dependency>;
+}): string[] {
   return Object.values(def.dependsOn).flatMap((dep) =>
     dep.via === undefined ? [] : [dep.via],
   );

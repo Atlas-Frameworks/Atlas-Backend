@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { ChangeEvent } from '../changes/change-event.js';
 import type { Dependency } from './define-query.js';
+import type { Match } from './match.js';
 import type { Sql } from './sql.js';
 
 // Local stand-in for DependencyIndex from @atlas/view-engine (E-03), built from
@@ -17,6 +18,8 @@ export type Level = 'filter' | 'shown';
 export interface OwnCandidate {
   viewKey: string;
   level: Level;
+  /** The view's exact-match conditions on its own type, if any. */
+  match?: Match;
 }
 
 /** A view that depends on the event's type as a related type. */
@@ -40,6 +43,7 @@ export interface Candidates {
 interface Entry {
   entityType: string;
   dependsOn: Record<string, Dependency>;
+  match?: Match;
 }
 
 /**
@@ -52,17 +56,21 @@ export class DependencyIndex {
   /** entity type → viewKey → how that view depends on the type. */
   private readonly byType = new Map<string, Map<string, Dependency>>();
 
-  /** Registers a view's dependencies. Its own type is always included. */
+  /**
+   * Registers a view's dependencies, and its exact-match conditions on its
+   * own type. Its own type is always included.
+   */
   add(
     viewKey: string,
     entityType: string,
     dependsOn: Record<string, Dependency>,
+    match?: Match,
   ): void {
     if (this.views.has(viewKey)) {
       return;
     }
     const deps = { [entityType]: {}, ...dependsOn };
-    this.views.set(viewKey, { entityType, dependsOn: deps });
+    this.views.set(viewKey, { entityType, dependsOn: deps, match });
     for (const [type, dep] of Object.entries(deps)) {
       let views = this.byType.get(type);
       if (!views) {
@@ -106,7 +114,11 @@ export class DependencyIndex {
         continue;
       }
       if (entry.entityType === evt.type) {
-        result.own.push({ viewKey, level });
+        result.own.push(
+          entry.match
+            ? { viewKey, level, match: entry.match }
+            : { viewKey, level },
+        );
       } else {
         result.linked.push({ viewKey, level, link: dep.link!, via: dep.via });
       }
@@ -126,6 +138,10 @@ export class DependencyIndex {
 
   dependenciesOf(viewKey: string): Record<string, Dependency> | undefined {
     return this.views.get(viewKey)?.dependsOn;
+  }
+
+  matchOf(viewKey: string): Match | undefined {
+    return this.views.get(viewKey)?.match;
   }
 }
 

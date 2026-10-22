@@ -64,6 +64,9 @@ export const ordersSearch = defineQuery({
   name: 'orders-search',
   entityType: 'orders',
   dependsOn: ordersSearchDependsOn,
+  // Another customer's order can't match, so it needs no query. The item
+  // conditions (type, price) are on items, so only the re-check knows them.
+  match: (p: OrdersSearchParams) => ({ customer_id: p.customerId }),
   build: (p: OrdersSearchParams) => {
     const where: Sql[] = [];
     if (p.types !== undefined) {
@@ -99,6 +102,7 @@ export const customerOrders = defineQuery({
   name: 'customer-orders',
   entityType: 'orders',
   dependsOn: customerOrdersDependsOn,
+  match: (p: CustomerOrdersParams) => ({ customer_id: p.customerId }),
   build: (p: CustomerOrdersParams) =>
     ordered(
       sql`

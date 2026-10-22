@@ -242,6 +242,8 @@ describe('GET /views/:viewKey/events (HTTP)', () => {
           listeners: 0,
           windows: [],
           orderBy: 'name asc',
+          // ?type=book sets no customer: no condition.
+          match: {},
           dependsOn: {
             orders: { filter: ['item_id', 'customer_id'], shown: ['name'] },
             items: {

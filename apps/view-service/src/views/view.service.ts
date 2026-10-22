@@ -14,6 +14,7 @@ import { DependencyIndex } from './dependency-index.js';
 import { toStatement } from './sql.js';
 import { ViewLoader } from './view-loader.js';
 import { ViewRegistry } from './view-registry.js';
+import { checkMatch, matchOf } from './match.js';
 import { orderName, orderOf } from './order.js';
 import { LiveWindow, windowKey, type WindowData } from './live-window.js';
 import type { Row } from './view-diff.js';
@@ -73,6 +74,10 @@ export class ViewService implements OnModuleDestroy {
     page: PageRequest = {},
   ): Promise<ViewPage> {
     const built = query.build(params);
+    const match = query.match && matchOf(query.match(params));
+    if (match) {
+      checkMatch(match, query.dependsOn[query.entityType], query.name);
+    }
     const view = this.registry.open(
       queryKey(query.name, params),
       query.entityType,
@@ -81,7 +86,12 @@ export class ViewService implements OnModuleDestroy {
       viaColumnsOf(query),
     );
     this.cancelClose(view);
-    this.dependencies.add(view.viewKey, query.entityType, query.dependsOn);
+    this.dependencies.add(
+      view.viewKey,
+      query.entityType,
+      query.dependsOn,
+      match,
+    );
     try {
       await this.feed.watch(
         Object.keys(this.dependencies.dependenciesOf(view.viewKey)!),

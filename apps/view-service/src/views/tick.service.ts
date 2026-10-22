@@ -8,6 +8,7 @@ import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import { ChangeBuffer, type ChangeBatch } from '../changes/change-buffer.js';
 import type { Dependency } from './define-query.js';
 import { DependencyIndex, type Level } from './dependency-index.js';
+import { mayMatch } from './match.js';
 import {
   applyDeletes,
   applyFull,
@@ -56,6 +57,8 @@ export class TickService implements OnApplicationBootstrap, OnModuleDestroy {
     ticks: 0,
     failed: 0,
     rechecked: 0,
+    /** Own-type changes a view's `match` ruled out with no query. */
+    skippedByMatch: 0,
     retried: 0,
     reloaded: 0,
     deltas: 0,
@@ -155,9 +158,19 @@ export class TickService implements OnApplicationBootstrap, OnModuleDestroy {
     >();
     for (const evt of batch.events) {
       const { own, linked } = this.dependencies.candidates(evt);
-      for (const { viewKey, level } of own) {
+      for (const { viewKey, level, match } of own) {
         if (evt.op === 'delete') {
           workOf(work, viewKey).deleted.add(evt.id);
+        } else if (
+          match &&
+          !mayMatch(match, evt, this.registry.get(viewKey)?.rows.get(evt.id))
+        ) {
+          // Known not to match, e.g. another customer's order: no query. A
+          // view holding it (its customer just changed) removes it.
+          this.stats.skippedByMatch += 1;
+          if (this.mayHold(viewKey, evt.id)) {
+            workOf(work, viewKey).deleted.add(evt.id);
+          }
         } else if (level === 'filter' || this.mayHold(viewKey, evt.id)) {
           addRecheck(work, viewKey, evt.id, evt.version);
         }

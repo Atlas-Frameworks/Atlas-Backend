@@ -96,6 +96,7 @@ function setup() {
     key: string,
     ids: Record<string, number> = {},
     deps = ordersDeps,
+    match?: Record<string, unknown>,
   ) => {
     const via = Object.values(deps).flatMap((d) => (d.via ? [d.via] : []));
     const view = registry.open(
@@ -105,7 +106,7 @@ function setup() {
       [],
       via,
     );
-    dependencies.add(key, 'orders', deps);
+    dependencies.add(key, 'orders', deps, match);
     for (const [id, version] of Object.entries(ids)) {
       hold(view, { id, version, ...db.columns.get(id) });
     }
@@ -325,6 +326,88 @@ describe('TickService', () => {
       view.loaded = true;
       await tick.tick();
       expect(sent[0].data).toMatchObject({ added: [{ id: 'a' }] });
+    });
+  });
+
+  describe('match', () => {
+    /** Customer X's view (match customer_id = X); its rows carry customer_id. */
+    function customerX(ids: Record<string, number> = {}) {
+      const s = setup();
+      for (const id of Object.keys(ids)) {
+        s.db.columns.set(id, { customer_id: 'X' });
+      }
+      const deps = {
+        ...ordersDeps,
+        orders: { filter: ['item_id', 'customer_id'] },
+      };
+      const view = s.open('x', ids, deps, { customer_id: 'X' });
+      const rechecks = () =>
+        s.db.queries.filter((q) => q.text.startsWith('SELECT q.*'));
+      return { ...s, ...view, rechecks };
+    }
+    const insert = (id: string, customer: string) => ({
+      id,
+      version: 1,
+      changes: {
+        old: {},
+        new: { name: 'n', item_id: 'i', customer_id: customer },
+      },
+    });
+
+    it("skips another customer's new order with no query", async () => {
+      const { tick, change, sent, rechecks } = customerX();
+
+      change(insert('b', 'Y'));
+      await tick.tick();
+
+      expect(rechecks()).toEqual([]);
+      expect(sent).toEqual([]);
+      expect(tick.stats.skippedByMatch).toBe(1);
+    });
+
+    it("re-checks this customer's new order", async () => {
+      const { db, tick, change, sent, rechecks } = customerX();
+      db.matching.set('b', 1);
+      db.columns.set('b', { customer_id: 'X' });
+
+      change(insert('b', 'X'));
+      await tick.tick();
+
+      expect(rechecks()).toHaveLength(1);
+      expect(sent[0].data).toMatchObject({ added: [{ id: 'b' }] });
+    });
+
+    it('removes a held order that moved to another customer, with no query', async () => {
+      const { tick, change, sent, rechecks } = customerX({ a: 1 });
+
+      change({
+        id: 'a',
+        version: 2,
+        changes: { old: { customer_id: 'X' }, new: { customer_id: 'Y' } },
+      });
+      await tick.tick();
+
+      expect(rechecks()).toEqual([]);
+      expect(sent[0].data).toMatchObject({ removed: ['a'], total: 0 });
+    });
+
+    it('re-checks when the event does not say the customer of an order it does not hold', async () => {
+      const { tick, change, rechecks } = customerX();
+
+      change({ id: 'c', version: 2 }); // item_id changed, customer not in the event
+      await tick.tick();
+
+      expect(rechecks()).toHaveLength(1);
+    });
+
+    it('takes the customer from the held row when the event does not carry it', async () => {
+      const { db, tick, change, rechecks } = customerX({ a: 1 });
+      db.matching.set('a', 2);
+
+      change({ id: 'a', version: 2 }); // item_id changed; held row says customer X
+      await tick.tick();
+
+      expect(rechecks()).toHaveLength(1);
     });
   });
 
