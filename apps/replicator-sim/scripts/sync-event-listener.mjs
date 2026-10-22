@@ -136,11 +136,24 @@ function parseJson(value) {
 
 function printEntry(stream, entryId, fields) {
   const valueIndex = fields.indexOf('value');
-  const event = valueIndex === -1 ? null : parseJson(fields[valueIndex + 1]);
+  if (valueIndex !== -1) {
+    printEvent(stream, entryId, parseJson(fields[valueIndex + 1]));
+    return;
+  }
+  for (let index = 0; index < fields.length; index += 2) {
+    printEvent(
+      stream,
+      entryId,
+      parseJson(fields[index + 1]),
+      parseJson(fields[index]),
+    );
+  }
+}
 
+function printEvent(stream, entryId, event, entityKey) {
   console.log('\n------------------------------------------------------------');
   console.log(`[Redis] ${stream} | entry ${entryId}`);
-
+  if (entityKey !== undefined) console.log(`entity key: ${entityKey}`);
   if (event !== null && typeof event === 'object') {
     console.log(
       `event: ${event.op ?? '?'} ${event.type ?? '?'} | sequence=${event.sequence ?? '-'} | typeSeq=${event.typeSeq ?? '?'}`,

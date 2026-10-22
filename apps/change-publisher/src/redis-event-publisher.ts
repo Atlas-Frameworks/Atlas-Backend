@@ -8,8 +8,13 @@ export class RedisEventPublisher implements EventPublisher {
   public constructor(redisUrl: string) {
     this.#redis = new Redis(redisUrl, {
       enableOfflineQueue: false,
+      lazyConnect: true,
       maxRetriesPerRequest: 1,
     });
+  }
+
+  public connect(): Promise<void> {
+    return this.#redis.connect();
   }
 
   public async publish(entityType: string, events: readonly ClaimedEvent[]): Promise<void> {

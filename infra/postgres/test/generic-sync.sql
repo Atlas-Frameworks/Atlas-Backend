@@ -31,6 +31,23 @@ SELECT benchmark_publisher.register_synced_table(
   'benchmark_publisher.publisher_test_entities'
 );
 
+DO $$
+BEGIN
+  ASSERT has_table_privilege(
+    'atlas_writer',
+    'benchmark_publisher.publisher_test_entities_outbox',
+    'SELECT'
+  ), 'writer role must be allowed to inspect the outbox';
+  ASSERT NOT EXISTS (
+    SELECT 1
+    FROM pg_attribute
+    WHERE attrelid = 'benchmark_publisher.publisher_test_entities_outbox'::regclass
+      AND attname = 'published_at'
+      AND NOT attisdropped
+  ), 'publisher outboxes must not retain an unused published_at column';
+END;
+$$;
+
 INSERT INTO benchmark_publisher.publisher_test_entities (id, label, enabled, sequence)
 VALUES ('00000000-0000-0000-0000-000000000102', 'first', true, 1);
 
@@ -130,6 +147,33 @@ BEGIN
   ASSERT NOT EXISTS (
     SELECT 1 FROM benchmark_publisher.publisher_test_entities_outbox
   ), 'published events must not remain in the outbox';
+END;
+$$;
+
+DELETE FROM benchmark_debezium.entity_type_sequence
+WHERE entity_type = 'items';
+
+DO $$
+DECLARE
+  item_id uuid;
+  item_sequence bigint;
+BEGIN
+  SELECT id, sequence
+  INTO item_id, item_sequence
+  FROM benchmark_debezium.items
+  ORDER BY id
+  LIMIT 1;
+
+  BEGIN
+    UPDATE benchmark_debezium.items
+    SET sequence = item_sequence + 1
+    WHERE id = item_id;
+    RAISE EXCEPTION 'Expected missing Debezium sequence state to reject the write';
+  EXCEPTION
+    WHEN OTHERS THEN
+      ASSERT SQLERRM = 'Missing entity_type_sequence row for items',
+        'Debezium must fail clearly when sequence state is missing';
+  END;
 END;
 $$;
 

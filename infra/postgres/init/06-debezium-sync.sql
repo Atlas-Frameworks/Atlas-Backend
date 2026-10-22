@@ -85,6 +85,10 @@ BEGIN
   WHERE sequence.entity_type = resolved_entity_type
   RETURNING seq INTO event_sequence;
 
+  IF event_sequence IS NULL THEN
+    RAISE EXCEPTION 'Missing entity_type_sequence row for %', resolved_entity_type;
+  END IF;
+
   EXECUTE format(
     'INSERT INTO %s (id, aggregatetype, aggregateid, payload)
      VALUES ($1, $2, $3, $4)',

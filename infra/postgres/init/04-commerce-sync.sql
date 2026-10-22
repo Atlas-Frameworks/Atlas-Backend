@@ -180,7 +180,6 @@ BEGIN
        entity_id text NOT NULL,
        payload jsonb NOT NULL,
        event_sequence bigint UNIQUE,
-       published_at timestamptz,
        created_at timestamptz NOT NULL DEFAULT clock_timestamp()
      )',
     qualified_outbox_name
@@ -204,12 +203,20 @@ BEGIN
     );
   END IF;
   EXECUTE format(
-    'CREATE INDEX IF NOT EXISTS %I ON %s (event_sequence NULLS FIRST, event_id)
-     WHERE published_at IS NULL',
+    'ALTER TABLE %s DROP COLUMN IF EXISTS published_at',
+    qualified_outbox_name
+  );
+  EXECUTE format(
+    'DROP INDEX IF EXISTS %I.%I',
+    schema_name,
+    outbox_name || '_pending_idx'
+  );
+  EXECUTE format(
+    'CREATE INDEX %I ON %s (event_sequence NULLS LAST, event_id)',
     outbox_name || '_pending_idx',
     qualified_outbox_name
   );
-  EXECUTE format('GRANT INSERT ON %s TO atlas_writer', qualified_outbox_name);
+  EXECUTE format('GRANT SELECT, INSERT ON %s TO atlas_writer', qualified_outbox_name);
   outbox_table := qualified_outbox_name::regclass;
 
   -- Preserve typeSeq when upgrading from the former public registry. The outbox

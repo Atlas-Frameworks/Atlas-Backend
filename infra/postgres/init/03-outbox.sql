@@ -88,7 +88,6 @@ BEGIN
     'WITH selected AS MATERIALIZED (
        SELECT pending.event_id, pending.event_sequence
        FROM %s AS pending
-       WHERE pending.published_at IS NULL
        ORDER BY pending.event_sequence NULLS LAST, pending.event_id
        LIMIT $1
        FOR UPDATE
@@ -123,7 +122,7 @@ BEGIN
             pending.entity_id,
             pending.payload || jsonb_build_object(''typeSeq'', pending.event_sequence)
      FROM %s AS pending
-     WHERE pending.published_at IS NULL
+     WHERE pending.event_sequence IS NOT NULL
      ORDER BY pending.event_sequence
      LIMIT $1',
     outbox_table
@@ -172,8 +171,7 @@ BEGIN
 
   EXECUTE format(
     'DELETE FROM %s
-     WHERE event_id = ANY($1)
-       AND published_at IS NULL',
+     WHERE event_id = ANY($1)',
     outbox_table
   ) USING p_event_ids;
   GET DIAGNOSTICS updated_count = ROW_COUNT;

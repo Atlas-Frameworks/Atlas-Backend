@@ -15,6 +15,7 @@ process.once('SIGINT', () => abortController.abort());
 process.once('SIGTERM', () => abortController.abort());
 
 try {
+  await publisher.connect();
   const entityTypes = await repository.listEntityTypes();
   if (entityTypes.length === 0) {
     throw new Error('No synchronized entity types are registered');

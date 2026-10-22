@@ -121,7 +121,6 @@ event_id       bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 entity_id      text NOT NULL,
 payload        jsonb NOT NULL,
 event_sequence bigint UNIQUE,
-published_at   timestamptz,
 created_at     timestamptz NOT NULL DEFAULT clock_timestamp()
 ```
 
@@ -137,7 +136,7 @@ outbox trigger writes the payload without `typeSeq`; `claim_sync_events()` adds
 it when the Publisher claims a committed batch. A separate outbox and publish
 loop per entity type prevents one busy entity type from blocking the others.
 
-The `atlas_writer` role needs write access to source tables and insert access
+The `atlas_writer` role needs write access to source tables and read/insert access
 to their outboxes. `atlas_publisher` reads the state table in the selected
 source schema and has execution rights on the claim/acknowledgement functions;
 it does not need to write application tables directly.
