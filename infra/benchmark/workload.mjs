@@ -1,11 +1,13 @@
 import { performance } from 'node:perf_hooks';
 
 export const entityTypes = [
-  'customers',
-  'items',
+  'w_campaigns',
+  'w_missions',
+  'w_plans',
+  'a_plans',
+  'a_missions',
+  'a_objectives',
   'orders',
-  'delivery_companies',
-  'distributors',
 ];
 
 export const pipelineDefinitions = {
@@ -115,28 +117,13 @@ async function updateEntity(options, updateStatements, eventIndex) {
 }
 
 function buildUpdateStatements(schema) {
-  return {
-    customers: `UPDATE ${schema}.customers
-      SET address = format('benchmark-%s-%s', $1::text, $2::integer),
-          sequence = nextval('${schema}.replicator_sequence')
-      WHERE id = $3::uuid`,
-    items: `UPDATE ${schema}.items
-      SET type = format('benchmark-%s-%s', $1::text, $2::integer),
-          sequence = nextval('${schema}.replicator_sequence')
-      WHERE id = $3::uuid`,
-    orders: `UPDATE ${schema}.orders
-      SET name = format('benchmark-%s-%s', $1::text, $2::integer),
-          sequence = nextval('${schema}.replicator_sequence')
-      WHERE id = $3::uuid`,
-    delivery_companies: `UPDATE ${schema}.delivery_companies
-      SET name = format('benchmark-%s-%s', $1::text, $2::integer),
-          sequence = nextval('${schema}.replicator_sequence')
-      WHERE id = $3::uuid`,
-    distributors: `UPDATE ${schema}.distributors
-      SET name = format('benchmark-%s-%s', $1::text, $2::integer),
-          sequence = nextval('${schema}.replicator_sequence')
-      WHERE id = $3::uuid`,
-  };
+  return Object.fromEntries(entityTypes.map((entityType) => [
+    entityType,
+    `UPDATE ${schema}.${entityType}
+     SET name = format('benchmark-%s-%s', $1::text, $2::integer),
+         sequence = nextval('${schema}.replicator_sequence')
+     WHERE id = $3::uuid`,
+  ]));
 }
 
 async function readStreamLengths(redis, streamPrefix) {
@@ -165,14 +152,12 @@ function hasDeliveredAllEvents(currentLengths, options) {
 }
 
 async function readOutboxBacklog(pool, schema) {
+  const backlogParts = entityTypes.map((entityType) =>
+    `SELECT count(*) AS pending_count FROM ${schema}.${entityType}_outbox`);
   const result = await pool.query(
     `SELECT sum(pending_count)::bigint AS pending_count
      FROM (
-       SELECT count(*) AS pending_count FROM ${schema}.customers_outbox
-       UNION ALL SELECT count(*) FROM ${schema}.items_outbox
-       UNION ALL SELECT count(*) FROM ${schema}.orders_outbox
-       UNION ALL SELECT count(*) FROM ${schema}.delivery_companies_outbox
-       UNION ALL SELECT count(*) FROM ${schema}.distributors_outbox
+       ${backlogParts.join('\nUNION ALL ')}
      ) AS pending`,
   );
   return Number(result.rows[0]?.pending_count ?? 0);

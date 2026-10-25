@@ -5,6 +5,7 @@ export default defineConfig({
   test: {
     globals: true,
     root: './',
+    setupFiles: ['reflect-metadata'],
     include: ['**/*.e2e-spec.ts'],
   },
 });

@@ -1,6 +1,6 @@
 # @atlas/replicator-sim
 
-Local command-line tools for changing commerce rows and observing the
+Local command-line tools for changing W/A order-domain rows and observing the
 Postgres → selected relay → Redis synchronization flow. Database setup and initial
 data belong to `infra/postgres`, not this workspace.
 
@@ -49,7 +49,7 @@ events. It starts from new events by default. `--history` includes existing
 entries and `--once` performs a single read.
 
 `SYNC_ENTITY_TYPES` is a comma-separated list of entity types; it defaults to
-`customers,items,orders,delivery_companies,distributors`. Additional settings are
+`w_campaigns,w_missions,w_plans,a_plans,a_missions,a_objectives,orders`. Additional settings are
 `REDIS_READ_COUNT`, `REDIS_BLOCK_MS`, `DEBEZIUM_HEALTH_INTERVAL_MS`, and
 `DEBEZIUM_HEALTH_URL`.
 

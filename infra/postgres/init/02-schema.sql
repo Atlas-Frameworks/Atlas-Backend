@@ -1,211 +1,107 @@
--- Isolated commerce environments used to compare the two relay pipelines.
--- Public contains shared synchronization functions only, never entity data.
+-- Isolated W/A order environments used to compare the two relay pipelines.
+-- Existing commerce POC tables are removed once when upgrading this workspace.
 
 CREATE SCHEMA IF NOT EXISTS benchmark_publisher;
 CREATE SCHEMA IF NOT EXISTS benchmark_debezium;
-
 CREATE SEQUENCE IF NOT EXISTS benchmark_publisher.replicator_sequence;
 CREATE SEQUENCE IF NOT EXISTS benchmark_debezium.replicator_sequence;
-
 GRANT USAGE, SELECT, UPDATE ON SEQUENCE benchmark_publisher.replicator_sequence TO atlas_writer;
 GRANT USAGE, SELECT, UPDATE ON SEQUENCE benchmark_debezium.replicator_sequence TO atlas_writer;
-
 GRANT USAGE ON SCHEMA benchmark_publisher TO atlas_writer, atlas_reader, atlas_publisher;
 GRANT USAGE ON SCHEMA benchmark_debezium TO atlas_writer, atlas_reader, debezium;
 
 DO $$
-DECLARE
-  schema_name text;
-  customers_table regclass;
+DECLARE schema_name text; legacy_table text;
 BEGIN
   FOREACH schema_name IN ARRAY ARRAY['benchmark_publisher', 'benchmark_debezium'] LOOP
-    customers_table := to_regclass(format('%I.customers', schema_name));
-
-    IF customers_table IS NOT NULL THEN
-      IF NOT EXISTS (
-         SELECT 1
-         FROM pg_attribute
-         WHERE attrelid = customers_table
-           AND attname = 'sequence'
-           AND atttypid = 'bigint'::regtype
-           AND NOT attisdropped
-      ) THEN
-        RAISE EXCEPTION
-          'Schema % does not contain the source sequence contract. Recreate the benchmark database before applying this setup.',
-          schema_name;
-      END IF;
+    IF to_regclass(format('%I.orders', schema_name)) IS NOT NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM pg_attribute
+         WHERE attrelid = to_regclass(format('%I.orders', schema_name))
+           AND attname = 'source' AND NOT attisdropped
+       ) THEN
+      FOREACH legacy_table IN ARRAY ARRAY['distributors', 'delivery_companies', 'orders', 'items', 'customers'] LOOP
+        EXECUTE format('DROP TABLE IF EXISTS %I.%I CASCADE', schema_name, legacy_table);
+        EXECUTE format('DROP TABLE IF EXISTS %I.%I CASCADE', schema_name, legacy_table || '_outbox');
+        EXECUTE format('DROP TABLE IF EXISTS %I.%I CASCADE', schema_name, legacy_table || '_sync_state');
+      END LOOP;
     END IF;
   END LOOP;
 END;
 $$;
 
-CREATE TABLE IF NOT EXISTS benchmark_publisher.customers (
-  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  name       text NOT NULL,
-  address    text NOT NULL,
-  sequence   bigint NOT NULL CHECK (sequence >= 1),
-  updated_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS benchmark_publisher.items (
-  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  price      numeric(12, 2) NOT NULL CHECK (price >= 0),
-  type       text NOT NULL,
-  sequence   bigint NOT NULL CHECK (sequence >= 1),
-  updated_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS benchmark_publisher.orders (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  name        text NOT NULL,
-  item_id     uuid NOT NULL REFERENCES benchmark_publisher.items(id),
-  customer_id uuid NOT NULL REFERENCES benchmark_publisher.customers(id),
-  sequence    bigint NOT NULL CHECK (sequence >= 1),
-  updated_at  timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS publisher_orders_item_idx
-  ON benchmark_publisher.orders (item_id);
-CREATE INDEX IF NOT EXISTS publisher_orders_customer_idx
-  ON benchmark_publisher.orders (customer_id);
-
-CREATE TABLE IF NOT EXISTS benchmark_publisher.delivery_companies (
-  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  name       text NOT NULL,
-  sequence   bigint NOT NULL CHECK (sequence >= 1),
-  updated_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS benchmark_publisher.distributors (
-  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  name                text NOT NULL,
-  order_ids           uuid[] NOT NULL DEFAULT ARRAY[]::uuid[],
-  delivery_company_id uuid NOT NULL CONSTRAINT benchmark_publisher_distributors_delivery_company_fk
-    REFERENCES benchmark_publisher.delivery_companies(id),
-  sequence            bigint NOT NULL CHECK (sequence >= 1),
-  updated_at          timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS publisher_distributors_order_ids_idx
-  ON benchmark_publisher.distributors USING gin (order_ids);
-
-CREATE TABLE IF NOT EXISTS benchmark_debezium.customers (
-  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  name       text NOT NULL,
-  address    text NOT NULL,
-  sequence   bigint NOT NULL CHECK (sequence >= 1),
-  updated_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS benchmark_debezium.items (
-  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  price      numeric(12, 2) NOT NULL CHECK (price >= 0),
-  type       text NOT NULL,
-  sequence   bigint NOT NULL CHECK (sequence >= 1),
-  updated_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS benchmark_debezium.orders (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  name        text NOT NULL,
-  item_id     uuid NOT NULL REFERENCES benchmark_debezium.items(id),
-  customer_id uuid NOT NULL REFERENCES benchmark_debezium.customers(id),
-  sequence    bigint NOT NULL CHECK (sequence >= 1),
-  updated_at  timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS debezium_orders_item_idx
-  ON benchmark_debezium.orders (item_id);
-CREATE INDEX IF NOT EXISTS debezium_orders_customer_idx
-  ON benchmark_debezium.orders (customer_id);
-
-CREATE TABLE IF NOT EXISTS benchmark_debezium.delivery_companies (
-  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  name       text NOT NULL,
-  sequence   bigint NOT NULL CHECK (sequence >= 1),
-  updated_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS benchmark_debezium.distributors (
-  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  name                text NOT NULL,
-  order_ids           uuid[] NOT NULL DEFAULT ARRAY[]::uuid[],
-  delivery_company_id uuid NOT NULL CONSTRAINT benchmark_debezium_distributors_delivery_company_fk
-    REFERENCES benchmark_debezium.delivery_companies(id),
-  sequence            bigint NOT NULL CHECK (sequence >= 1),
-  updated_at          timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS debezium_distributors_order_ids_idx
-  ON benchmark_debezium.distributors USING gin (order_ids);
-
--- Existing POC schemas predate delivery companies. Preserve their distributors
--- by assigning them to one migration company before enforcing the relationship.
 DO $$
-DECLARE
-  schema_name text;
-  migration_company_id uuid := gen_random_uuid();
-  secondary_company_id uuid := gen_random_uuid();
-  distributor_table regclass;
-  constraint_name text;
+DECLARE schema_name text; index_prefix text;
 BEGIN
   FOREACH schema_name IN ARRAY ARRAY['benchmark_publisher', 'benchmark_debezium'] LOOP
-    distributor_table := format('%I.distributors', schema_name)::regclass;
-    constraint_name := schema_name || '_distributors_delivery_company_fk';
-    EXECUTE format(
-      'ALTER TABLE %I.distributors ADD COLUMN IF NOT EXISTS delivery_company_id uuid',
-      schema_name
-    );
-    EXECUTE format(
-      'INSERT INTO %I.delivery_companies (id, name, sequence)
-       SELECT $1, ''Migrated Delivery Company 1'', nextval(%L)
-       WHERE EXISTS (
-         SELECT 1 FROM %I.distributors WHERE delivery_company_id IS NULL
-       )
-       ON CONFLICT (id) DO NOTHING',
-      schema_name,
-      schema_name || '.replicator_sequence',
-      schema_name
-    ) USING migration_company_id;
-    EXECUTE format(
-      'INSERT INTO %I.delivery_companies (id, name, sequence)
-       SELECT $1, ''Migrated Delivery Company 2'', nextval(%L)
-       WHERE EXISTS (SELECT 1 FROM %I.distributors)
-         AND (SELECT count(*) FROM %I.delivery_companies) < 2
-       ON CONFLICT (id) DO NOTHING',
-      schema_name,
-      schema_name || '.replicator_sequence',
-      schema_name,
-      schema_name
-    ) USING secondary_company_id;
-    EXECUTE format(
-      'UPDATE %I.distributors
-       SET delivery_company_id = $1,
-           sequence = nextval(%L)
-       WHERE delivery_company_id IS NULL',
-      schema_name,
-      schema_name || '.replicator_sequence'
-    ) USING migration_company_id;
-    EXECUTE format(
-      'ALTER TABLE %I.distributors ALTER COLUMN delivery_company_id SET NOT NULL',
-      schema_name
-    );
-    IF NOT EXISTS (
-      SELECT 1
-      FROM pg_constraint
-      WHERE conrelid = distributor_table
-        AND conname = constraint_name
-    ) THEN
-      EXECUTE format(
-        'ALTER TABLE %I.distributors
-         ADD CONSTRAINT %I FOREIGN KEY (delivery_company_id)
-         REFERENCES %I.delivery_companies(id)',
-        schema_name,
-        constraint_name,
-        schema_name
-      );
-    END IF;
+    index_prefix := CASE WHEN schema_name = 'benchmark_publisher' THEN 'publisher' ELSE 'debezium' END;
+    EXECUTE format('CREATE TABLE IF NOT EXISTS %I.w_campaigns (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL,
+      number integer NOT NULL, status text NOT NULL, country text NOT NULL,
+      sequence bigint NOT NULL CHECK (sequence >= 1), updated_at timestamptz NOT NULL DEFAULT now()
+    )', schema_name);
+    EXECUTE format('CREATE TABLE IF NOT EXISTS %I.w_missions (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL,
+      number integer NOT NULL, status text NOT NULL, country text NOT NULL,
+      campaign_id uuid NOT NULL REFERENCES %I.w_campaigns(id),
+      sequence bigint NOT NULL CHECK (sequence >= 1), updated_at timestamptz NOT NULL DEFAULT now()
+    )', schema_name, schema_name);
+    EXECUTE format('CREATE TABLE IF NOT EXISTS %I.w_plans (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL,
+      number integer NOT NULL, status text NOT NULL, country text NOT NULL, category text NOT NULL,
+      sequence bigint NOT NULL CHECK (sequence >= 1), updated_at timestamptz NOT NULL DEFAULT now()
+    )', schema_name);
+    EXECUTE format('CREATE TABLE IF NOT EXISTS %I.w_mission_plans (
+      mission_id uuid NOT NULL REFERENCES %I.w_missions(id) ON DELETE CASCADE,
+      plan_id uuid NOT NULL REFERENCES %I.w_plans(id) ON DELETE CASCADE,
+      PRIMARY KEY (mission_id, plan_id)
+    )', schema_name, schema_name, schema_name);
+    EXECUTE format('CREATE TABLE IF NOT EXISTS %I.a_plans (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL,
+      number integer NOT NULL, status text NOT NULL, country text NOT NULL,
+      sequence bigint NOT NULL CHECK (sequence >= 1), updated_at timestamptz NOT NULL DEFAULT now()
+    )', schema_name);
+    EXECUTE format('CREATE TABLE IF NOT EXISTS %I.a_missions (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL,
+      number integer NOT NULL, status text NOT NULL, country text NOT NULL,
+      a_plan_id uuid NOT NULL REFERENCES %I.a_plans(id),
+      sequence bigint NOT NULL CHECK (sequence >= 1), updated_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (id, a_plan_id)
+    )', schema_name, schema_name);
+    EXECUTE format('CREATE TABLE IF NOT EXISTS %I.a_objectives (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL,
+      number integer NOT NULL, status text NOT NULL, country text NOT NULL, category text NOT NULL,
+      a_mission_id uuid NOT NULL, a_plan_id uuid NOT NULL,
+      sequence bigint NOT NULL CHECK (sequence >= 1), updated_at timestamptz NOT NULL DEFAULT now(),
+      FOREIGN KEY (a_mission_id, a_plan_id) REFERENCES %I.a_missions(id, a_plan_id)
+    )', schema_name, schema_name);
+    EXECUTE format('CREATE TABLE IF NOT EXISTS %I.orders (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), source text NOT NULL CHECK (source IN (''W'', ''A'')),
+      name text NOT NULL, number integer NOT NULL, status text NOT NULL, country text NOT NULL,
+      priority integer NOT NULL CHECK (priority BETWEEN 1 AND 5),
+      amount numeric(12, 2) NOT NULL CHECK (amount >= 0), category text NOT NULL,
+      w_plan_id uuid REFERENCES %I.w_plans(id), a_objective_id uuid REFERENCES %I.a_objectives(id),
+      sequence bigint NOT NULL CHECK (sequence >= 1), updated_at timestamptz NOT NULL DEFAULT now(),
+      CHECK ((source = ''W'' AND w_plan_id IS NOT NULL AND a_objective_id IS NULL)
+          OR (source = ''A'' AND a_objective_id IS NOT NULL AND w_plan_id IS NULL))
+    )', schema_name, schema_name, schema_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.w_missions (campaign_id)', index_prefix || '_w_missions_campaign_idx', schema_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.w_missions (campaign_id, status, country, id)', index_prefix || '_w_missions_tree_filter_idx', schema_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.w_mission_plans (plan_id)', index_prefix || '_w_mission_plans_plan_idx', schema_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.w_plans (status, country, category, id)', index_prefix || '_w_plans_filter_idx', schema_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.a_missions (a_plan_id)', index_prefix || '_a_missions_plan_idx', schema_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.a_missions (a_plan_id, status, country, id)', index_prefix || '_a_missions_tree_filter_idx', schema_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.a_objectives (a_plan_id, a_mission_id)', index_prefix || '_a_objectives_hierarchy_idx', schema_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.a_objectives (a_plan_id, a_mission_id, status, country, category, id)', index_prefix || '_a_objectives_tree_filter_idx', schema_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.orders (w_plan_id, id) WHERE source = ''W''', index_prefix || '_orders_w_plan_order_idx', schema_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.orders (a_objective_id, id) WHERE source = ''A''', index_prefix || '_orders_a_objective_order_idx', schema_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.orders (w_plan_id, country, status, id) WHERE source = ''W''', index_prefix || '_orders_w_tree_filter_idx', schema_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.orders (a_objective_id, country, status, id) WHERE source = ''A''', index_prefix || '_orders_a_tree_filter_idx', schema_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.orders (country, w_plan_id, status, id) WHERE source = ''W''', index_prefix || '_orders_w_country_filter_idx', schema_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.orders (country, a_objective_id, status, id) WHERE source = ''A''', index_prefix || '_orders_a_country_filter_idx', schema_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.orders (source, status, country)', index_prefix || '_orders_filter_idx', schema_name);
+    EXECUTE format('GRANT SELECT ON %I.w_mission_plans TO atlas_reader', schema_name);
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %I.w_mission_plans TO atlas_writer', schema_name);
   END LOOP;
 END;
 $$;
-
-CREATE INDEX IF NOT EXISTS publisher_distributors_delivery_company_idx
-  ON benchmark_publisher.distributors (delivery_company_id);
-CREATE INDEX IF NOT EXISTS debezium_distributors_delivery_company_idx
-  ON benchmark_debezium.distributors (delivery_company_id);

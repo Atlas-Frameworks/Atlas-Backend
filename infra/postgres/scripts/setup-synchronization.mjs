@@ -14,7 +14,7 @@ async function main() {
     path.join(projectRoot, 'infra/postgres/init/02-schema.sql'),
     path.join(projectRoot, 'infra/postgres/init/03-outbox.sql'),
     path.join(projectRoot, 'infra/postgres/init/04-commerce-sync.sql'),
-    path.join(projectRoot, 'infra/postgres/init/05-register-commerce.sql'),
+    path.join(projectRoot, 'infra/postgres/init/05-register-order-domain.sql'),
     path.join(projectRoot, 'infra/postgres/init/06-debezium-sync.sql'),
   ];
   const sqlParts = await Promise.all(

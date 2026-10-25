@@ -37,8 +37,13 @@ CREATE TABLE IF NOT EXISTS benchmark_debezium.entity_type_sequence (
   seq bigint NOT NULL DEFAULT 0 CHECK (seq >= 0)
 );
 
+DELETE FROM benchmark_debezium.entity_type_sequence
+WHERE entity_type IN ('customers', 'items', 'delivery_companies', 'distributors');
+
 INSERT INTO benchmark_debezium.entity_type_sequence (entity_type)
-VALUES ('customers'), ('items'), ('orders'), ('delivery_companies'), ('distributors')
+VALUES
+  ('w_campaigns'), ('w_missions'), ('w_plans'),
+  ('a_plans'), ('a_missions'), ('a_objectives'), ('orders')
 ON CONFLICT (entity_type) DO NOTHING;
 
 CREATE OR REPLACE FUNCTION benchmark_debezium.validate_entity_sequence()
@@ -123,11 +128,13 @@ DECLARE
   outbox_name text;
 BEGIN
   FOREACH entity_type IN ARRAY ARRAY[
-    'customers',
-    'items',
-    'orders',
-    'delivery_companies',
-    'distributors'
+    'w_campaigns',
+    'w_missions',
+    'w_plans',
+    'a_plans',
+    'a_missions',
+    'a_objectives',
+    'orders'
   ] LOOP
     outbox_name := entity_type || '_outbox';
     EXECUTE format(
@@ -203,18 +210,22 @@ BEGIN
     SELECT 1 FROM pg_publication WHERE pubname = 'benchmark_debezium_outbox'
   ) THEN
     CREATE PUBLICATION benchmark_debezium_outbox FOR TABLE
-      benchmark_debezium.customers_outbox,
-      benchmark_debezium.items_outbox,
-      benchmark_debezium.orders_outbox,
-      benchmark_debezium.delivery_companies_outbox,
-      benchmark_debezium.distributors_outbox;
+      benchmark_debezium.w_campaigns_outbox,
+      benchmark_debezium.w_missions_outbox,
+      benchmark_debezium.w_plans_outbox,
+      benchmark_debezium.a_plans_outbox,
+      benchmark_debezium.a_missions_outbox,
+      benchmark_debezium.a_objectives_outbox,
+      benchmark_debezium.orders_outbox;
   ELSE
     ALTER PUBLICATION benchmark_debezium_outbox SET TABLE
-      benchmark_debezium.customers_outbox,
-      benchmark_debezium.items_outbox,
-      benchmark_debezium.orders_outbox,
-      benchmark_debezium.delivery_companies_outbox,
-      benchmark_debezium.distributors_outbox;
+      benchmark_debezium.w_campaigns_outbox,
+      benchmark_debezium.w_missions_outbox,
+      benchmark_debezium.w_plans_outbox,
+      benchmark_debezium.a_plans_outbox,
+      benchmark_debezium.a_missions_outbox,
+      benchmark_debezium.a_objectives_outbox,
+      benchmark_debezium.orders_outbox;
   END IF;
 END;
 $$;

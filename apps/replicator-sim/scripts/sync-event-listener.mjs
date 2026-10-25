@@ -9,7 +9,7 @@ const projectRoot = path.resolve(
   '..',
 );
 
-const defaultStreams = 'customers,items,orders,delivery_companies,distributors';
+const defaultStreams = 'w_campaigns,w_missions,w_plans,a_plans,a_missions,a_objectives,orders';
 const entityTypes = (process.env.SYNC_ENTITY_TYPES ?? defaultStreams)
   .split(',')
   .map((entityType) => entityType.trim())

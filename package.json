@@ -20,6 +20,7 @@
     "infra:logs": "docker compose -f infra/docker-compose.yml logs -f --tail=100",
     "postgres:setup": "node infra/postgres/scripts/setup-synchronization.mjs",
     "postgres:seed": "node infra/postgres/scripts/seed-commerce.mjs",
+    "postgres:seed:order-groups-load": "node infra/postgres/scripts/seed-commerce.mjs --order-groups-load",
     "publisher:start": "npm run dev --workspace @atlas/change-publisher",
     "benchmark:setup": "node infra/benchmark/setup.mjs",
     "benchmark:run": "node infra/benchmark/run.mjs",
