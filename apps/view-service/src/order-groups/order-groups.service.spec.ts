@@ -17,13 +17,17 @@ vi.mock('./order-groups-query.js', () => ({
 
 describe('OrderGroupsService', () => {
   it('builds the response from flat database rows', async () => {
-    buildOrderGroupsQueryMock.mockResolvedValue([
+    const rows = [
       {
         rowKind: 'group', level: 1, groupPath: ['W Campaign Alpha'],
         parentPath: null, groupName: 'W Campaign Alpha', total: '1',
         orderId: null, orderName: null,
       },
-    ]);
+    ];
+    buildOrderGroupsQueryMock.mockReturnValue({
+      toQuery: () => 'select final grouping query',
+      then: (resolve: (value: typeof rows) => unknown) => Promise.resolve(rows).then(resolve),
+    });
     const service = new OrderGroupsService({} as Knex);
     await expect(service.findGroups({} as never)).resolves.toEqual({
       nodes: [{

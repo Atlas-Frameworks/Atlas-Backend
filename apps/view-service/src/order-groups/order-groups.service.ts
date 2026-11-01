@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Knex } from 'knex';
 import { KNEX_CONNECTION } from '../database/database.constants.js';
 import { GroupOrdersRequestDto } from './dto/group-orders-request.dto.js';
@@ -13,10 +13,14 @@ import type {
 
 @Injectable()
 export class OrderGroupsService {
+  private readonly logger = new Logger(OrderGroupsService.name);
+
   constructor(@Inject(KNEX_CONNECTION) private readonly database: Knex) {}
 
   async findGroups(request: OrderGroupsRequestDto): Promise<GroupingResponse> {
-    const rows = await buildOrderGroupsQuery(this.database, request);
+    const query = buildOrderGroupsQuery(this.database, request);
+    console.log(query.toQuery());
+    const rows = await query;
     return buildGroupingResponse(rows);
   }
 
