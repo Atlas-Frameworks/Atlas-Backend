@@ -10,7 +10,7 @@ import {
   type GroupPathFilter,
   type GroupPathValue,
   type OrderDomainSelection,
-  parseSerializedGroupPath,
+  parseGroupId,
   validateDimensionsForSources,
 } from './order-group-query-support.js';
 import type { GroupOrder } from './order-groups.types.js';
@@ -30,7 +30,7 @@ export function buildGroupOrdersQuery(
   const dimensions = resolveGroupingDimensions(request.groupBy);
   const origin = createOrderDomainSelection(request);
   validateDimensionsForSources(dimensions, resolveOrderSources(origin));
-  const maximumDepth = dimensions.length + 1;
+  const maximumDepth = dimensions.length;
   const includedPaths = parseGroupPaths(request.groupIds, maximumDepth);
   assertIncludedPaths(includedPaths);
   const includedOrders = buildOrderSelectionQuery(database, {
@@ -98,9 +98,9 @@ function orderColumns(): Record<keyof GroupOrder, string> {
 
 function parseGroupPaths(groupIds: readonly string[], maximumDepth: number): readonly (readonly GroupPathValue[])[] {
   return groupIds.map((groupId) => {
-    const path = parseSerializedGroupPath(groupId);
-    if (path.length < 1 || path.length > maximumDepth) {
-      throw new BadRequestException(`Group path must contain between 1 and ${maximumDepth} values`);
+    const path = parseGroupId(groupId);
+    if (path.length > maximumDepth) {
+      throw new BadRequestException(`Group path must contain at most ${maximumDepth} values`);
     }
     return path;
   });
@@ -115,7 +115,7 @@ function createGroupPathFilters(
   dimensions: readonly GroupingDimensionDefinition[],
 ): readonly GroupPathFilter[] {
   return paths.map((path) => ({
-    columns: ['root.name', ...dimensions.slice(0, path.length - 1).map(({ column }) => column)],
+    columns: dimensions.slice(0, path.length).map(({ column }) => column),
     path,
   }));
 }

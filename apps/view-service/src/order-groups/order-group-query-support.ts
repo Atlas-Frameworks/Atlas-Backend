@@ -9,6 +9,8 @@ import {
 import { applyOrderFilters } from './order-filter.js';
 
 export const orderSchema = 'benchmark_publisher';
+/** ID of the hard-coded node above every grouping level; it stands for the empty path. */
+export const rootGroupId = 'root';
 export type GroupPathValue = string | number | boolean | null;
 
 export interface GroupPathFilter {
@@ -97,6 +99,11 @@ export function parseSerializedGroupPath(pathId: string): readonly GroupPathValu
   return path;
 }
 
+/** Parses a group ID from a response, mapping the root ID to the empty path. */
+export function parseGroupId(groupId: string): readonly GroupPathValue[] {
+  return groupId === rootGroupId ? [] : parseSerializedGroupPath(groupId);
+}
+
 /** Adds a grouped OR condition containing null-safe filters for every path. */
 export function applyGroupPathFilters(query: Knex.QueryBuilder, filters: readonly GroupPathFilter[]): void {
   query.where((pathsQuery) => {
@@ -158,6 +165,8 @@ function hasAOrigin(selection: OrderDomainSelection): boolean {
 }
 
 function applySingleGroupPathFilter(query: Knex.QueryBuilder, columns: readonly string[], path: readonly GroupPathValue[]): void {
+  // The empty (root) path matches every order; an empty nested group would be dropped from the OR instead.
+  if (columns.length === 0) query.whereRaw('TRUE');
   columns.forEach((column, index) => {
     const value = path[index];
     if (value === undefined) throw new BadRequestException('Group path is shorter than its columns');

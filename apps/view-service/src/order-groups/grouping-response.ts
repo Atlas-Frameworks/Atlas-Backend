@@ -1,8 +1,11 @@
+import { rootGroupId } from './order-group-query-support.js';
 import type {
   GroupingNode,
   GroupingResponse,
   OrderGroupQueryRow,
 } from './order-groups.types.js';
+
+const rootGroupName = 'root';
 
 interface MutableGroupingNode {
   readonly id: string;
@@ -23,7 +26,7 @@ interface OrderNodeRecord {
   readonly parentIds: Set<string>;
 }
 
-/** Converts PostgreSQL's flat group and membership rows into display nodes. */
+/** Converts PostgreSQL's flat rows into display nodes under one hard-coded root node. */
 export function buildGroupingResponse(rows: readonly OrderGroupQueryRow[]): GroupingResponse {
   const groups = createGroups(rows);
   connectGroups(groups);
@@ -34,20 +37,25 @@ export function buildGroupingResponse(rows: readonly OrderGroupQueryRow[]): Grou
 
 function createGroups(rows: readonly OrderGroupQueryRow[]): Map<string, GroupRecord> {
   const groups = new Map<string, GroupRecord>();
+  const rootTotal = rows.find(isRootRow)?.total;
+  groups.set(rootGroupId, createGroupRecord(rootGroupId, rootGroupName, [], rootTotal));
   rows.filter(isGroupRow).forEach((row) => {
     const id = serializeGroupPath(row.groupPath);
-    groups.set(id, {
-      node: {
-        id,
-        name: row.groupName ?? 'null',
-        parentIds: row.parentPath === null ? [] : [serializeGroupPath(row.parentPath)],
-        total: Number(row.total ?? 0),
-        children: [],
-      },
-      childIds: new Set<string>(),
-    });
+    groups.set(id, createGroupRecord(id, row.groupName ?? 'null', [toGroupId(row.parentPath)], row.total));
   });
   return groups;
+}
+
+function createGroupRecord(
+  id: string,
+  name: string,
+  parentIds: string[],
+  total: OrderGroupQueryRow['total'] | undefined,
+): GroupRecord {
+  return {
+    node: { id, name, parentIds, total: Number(total ?? 0), children: [] },
+    childIds: new Set<string>(),
+  };
 }
 
 function connectGroups(groups: ReadonlyMap<string, GroupRecord>): void {
@@ -73,7 +81,7 @@ function addOrderMembership(
   orders: Map<string, OrderNodeRecord>,
 ): void {
   if (row.orderId === null || row.orderName === null) return;
-  const parentId = serializeGroupPath(row.groupPath);
+  const parentId = toGroupId(row.groupPath);
   groups.get(parentId)?.childIds.add(row.orderId);
   const order = orders.get(row.orderId) ?? createOrderRecord(row.orderId, row.orderName);
   order.parentIds.add(parentId);
@@ -137,8 +145,17 @@ function toGroupingNode(order: OrderNodeRecord): GroupingNode {
   };
 }
 
+/** Top-level groups have no parent path and no-grouping orders have an empty one: both belong to the root. */
+function toGroupId(path: readonly unknown[] | null): string {
+  return path === null || path.length === 0 ? rootGroupId : serializeGroupPath(path);
+}
+
 function serializeGroupPath(path: readonly unknown[]): string {
   return `[${path.map((value) => JSON.stringify(value) ?? 'null').join(', ')}]`;
+}
+
+function isRootRow(row: OrderGroupQueryRow): boolean {
+  return row.rowKind === 'root';
 }
 
 function isGroupRow(row: OrderGroupQueryRow): boolean {

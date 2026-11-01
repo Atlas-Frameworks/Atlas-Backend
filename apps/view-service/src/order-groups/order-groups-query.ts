@@ -7,7 +7,7 @@ import {
   buildOrderDomainQueries,
   buildGroupPathExpression,
   createOrderDomainSelection,
-  parseSerializedGroupPath,
+  parseGroupId,
   resolveOrderSources,
   validateDimensionsForSources,
 } from './order-group-query-support.js';
@@ -25,7 +25,7 @@ interface PaginationValues {
 const maximumPageSize = 1000;
 const maximumPostgresInteger = 2_147_483_647;
 
-/** Returns flat group rows and paginated leaf-order memberships. */
+/** Returns the root total, flat group rows and paginated leaf-order memberships. */
 export function buildOrderGroupsQuery(
   database: Knex,
   request: OrderGroupsRequestDto,
@@ -33,12 +33,12 @@ export function buildOrderGroupsQuery(
   const dimensions = resolveGroupingDimensions(request.groupBy);
   const selection = createOrderDomainSelection(request);
   validateDimensionsForSources(dimensions, resolveOrderSources(selection));
-  const pathLength = dimensions.length + 1;
+  const pathLength = dimensions.length;
   const pagination = parsePaginationOverrides(request.pagination, pathLength);
   const resultRows = buildResultRows(database, pathLength);
-  return database
-    .with('memberships', buildMemberships(database, selection, dimensions))
-    .with('node_counts', buildNodeCounts(database, pathLength))
+  const query = database.with('memberships', buildMemberships(database, selection, dimensions));
+  if (pathLength > 0) query.with('node_counts', buildNodeCounts(database, pathLength));
+  return query
     .with('pagination_overrides', buildPaginationOverrides(database, pagination))
     .with('ranked_leaf_orders', buildRankedLeafOrders(database, request.defaultLimit))
     .with('paginated_leaf_orders', buildPaginatedLeafOrders(database))
@@ -62,13 +62,13 @@ export function parsePaginationOverrides(
   });
 }
 
-/** Selects unique order-to-leaf memberships for the requested root. */
+/** Selects unique order-to-leaf memberships; the path holds only the requested dimensions. */
 function buildMemberships(
   database: Knex,
   selection: OrderDomainSelection,
   dimensions: readonly GroupingDimensionDefinition[],
 ): Knex.QueryBuilder {
-  const pathColumns = ['root.name', ...dimensions.map(({ column }) => column)];
+  const pathColumns = dimensions.map(({ column }) => column);
   const sourceQueries = buildOrderDomainQueries(database, selection).map(({ query }) => query
     .select({ order_id: 'customer_order.id', order_name: 'customer_order.name' })
     .select(buildGroupPathExpression(database, pathColumns)));
@@ -139,12 +139,27 @@ function buildPaginatedLeafOrders(database: Knex): Knex.QueryBuilder {
     .select('ranked_order.group_path', 'ranked_order.order_id', 'ranked_order.order_name');
 }
 
-/** Unifies group rows and order memberships without constructing response JSON. */
+/** Unifies the root total, group rows and order memberships without constructing response JSON. */
 function buildResultRows(database: Knex, leafLevel: number): Knex.QueryBuilder {
-  return buildGroupRows(database).unionAll(buildOrderMembershipRows(database, leafLevel));
+  const groupRows = leafLevel > 0 ? [buildGroupRows(database)] : [];
+  return buildRootTotalRow(database).unionAll([...groupRows, buildOrderMembershipRows(database, leafLevel)]);
 }
 
-/** Returns one flat row for every unique group path. */
+/** Returns the distinct order count for the root node that the response adds itself. */
+function buildRootTotalRow(database: Knex): Knex.QueryBuilder {
+  return database.from({ membership: 'memberships' }).select(
+    database.raw("'root'::text AS ??", ['rowKind']),
+    database.raw('0::integer AS ??', ['level']),
+    database.raw("'[]'::jsonb AS ??", ['groupPath']),
+    database.raw('NULL::jsonb AS ??', ['parentPath']),
+    database.raw('NULL::text AS ??', ['groupName']),
+    database.raw('count(DISTINCT ??) AS ??', ['membership.order_id', 'total']),
+    database.raw('NULL::uuid AS ??', ['orderId']),
+    database.raw('NULL::text AS ??', ['orderName']),
+  );
+}
+
+/** Returns one flat row for every unique group path below the root. */
 function buildGroupRows(database: Knex): Knex.QueryBuilder {
   return database.from({ node: 'node_counts' }).select(
     database.raw("'group'::text AS ??", ['rowKind']),
@@ -173,7 +188,7 @@ function buildOrderMembershipRows(database: Knex, leafLevel: number): Knex.Query
 }
 
 function parsePath(pathId: string, expectedLength: number): readonly unknown[] {
-  const path = parseSerializedGroupPath(pathId);
+  const path = parseGroupId(pathId);
   if (path.length === expectedLength) return path;
   throw new BadRequestException(`Pagination key must contain ${expectedLength} path values: ${pathId}`);
 }

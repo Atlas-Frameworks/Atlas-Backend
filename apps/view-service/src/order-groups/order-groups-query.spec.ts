@@ -23,7 +23,8 @@ describe('order groups query', () => {
     expect(statement.sql).toContain('benchmark_publisher"."w_campaigns');
     expect(statement.sql).toContain('"w_mission"."id" in (?)');
     expect(statement.sql).not.toContain('benchmark_publisher"."a_plans');
-    expect(statement.sql).toContain('jsonb_build_array("root"."name", "w_mission"."name", "w_plan"."number", "customer_order"."status")');
+    expect(statement.sql).toContain('jsonb_build_array("w_mission"."name", "w_plan"."number", "customer_order"."status")');
+    expect(statement.sql).not.toContain('"root"."name"');
     expect(statement.sql).toContain('count("node_membership"."order_id")');
   });
 
@@ -69,26 +70,42 @@ describe('order groups query', () => {
     expect(() => buildOrderGroupsQuery(database, request)).toThrow(BadRequestException);
   });
 
-  it('returns flat group and order-membership rows without response JSON', () => {
+  it('returns a root total plus flat group and order-membership rows without response JSON', () => {
     const request = createRequest(OrderSource.W, [OrderGroupingDimension.W_PLAN_NAME]);
     const sql = buildOrderGroupsQuery(database, request).toSQL().sql;
     expect(sql).toContain('row_number() OVER');
     expect(sql).toContain('union all');
+    expect(sql).toContain('count(DISTINCT "membership"."order_id") AS "total"');
+    expect(sql).toContain("'root'::text");
     expect(sql).toContain("'group'::text");
     expect(sql).toContain("'order'::text");
     expect(sql).not.toContain('jsonb_build_object');
     expect(sql).not.toContain('materialized');
   });
+
+  it('skips group levels and returns orders on the empty path when nothing is grouped', () => {
+    const request = createRequest(OrderSource.A, []);
+    const sql = buildOrderGroupsQuery(database, request).toSQL().sql;
+    expect(sql).toContain('jsonb_build_array() AS full_group_path');
+    expect(sql).not.toContain('node_counts');
+    expect(sql).not.toContain("'group'::text");
+    expect(sql).toContain("'order'::text");
+  });
 });
 
 describe('pagination overrides', () => {
   it('parses a valid full-path override', () => {
-    expect(parsePaginationOverrides({ '["W Campaign Alpha","W Plan One"]': { limit: 5, offset: 10 } }, 2))
-      .toEqual([{ path: ['W Campaign Alpha', 'W Plan One'], limit: 5, offset: 10 }]);
+    expect(parsePaginationOverrides({ '["W Mission North","W Plan One"]': { limit: 5, offset: 10 } }, 2))
+      .toEqual([{ path: ['W Mission North', 'W Plan One'], limit: 5, offset: 10 }]);
   });
   it('rejects a non-leaf override', () => {
-    expect(() => parsePaginationOverrides({ '["W Campaign Alpha"]': { limit: 5, offset: 0 } }, 2))
+    expect(() => parsePaginationOverrides({ '["W Mission North"]': { limit: 5, offset: 0 } }, 2))
       .toThrow(BadRequestException);
+  });
+  it('maps the root key to the empty path when nothing is grouped', () => {
+    expect(parsePaginationOverrides({ root: { limit: 5, offset: 0 } }, 0))
+      .toEqual([{ path: [], limit: 5, offset: 0 }]);
+    expect(() => parsePaginationOverrides({ root: { limit: 5, offset: 0 } }, 1)).toThrow(BadRequestException);
   });
 });
 

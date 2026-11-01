@@ -32,7 +32,7 @@ export interface PaginationOverride {
 }
 
 export interface OrderGroupQueryRow {
-  readonly rowKind: 'group' | 'order';
+  readonly rowKind: 'root' | 'group' | 'order';
   readonly level: number;
   readonly groupPath: readonly unknown[];
   readonly parentPath: readonly unknown[] | null;

@@ -19,8 +19,8 @@ describe('OrderGroupsService', () => {
   it('builds the response from flat database rows', async () => {
     const rows = [
       {
-        rowKind: 'group', level: 1, groupPath: ['W Campaign Alpha'],
-        parentPath: null, groupName: 'W Campaign Alpha', total: '1',
+        rowKind: 'root', level: 0, groupPath: [],
+        parentPath: null, groupName: null, total: '1',
         orderId: null, orderName: null,
       },
     ];
@@ -31,7 +31,7 @@ describe('OrderGroupsService', () => {
     const service = new OrderGroupsService({} as Knex);
     await expect(service.findGroups({} as never)).resolves.toEqual({
       nodes: [{
-        id: '["W Campaign Alpha"]', name: 'W Campaign Alpha',
+        id: 'root', name: 'root',
         parentIds: [], total: 1, children: [],
       }],
     });

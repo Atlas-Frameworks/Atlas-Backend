@@ -12,9 +12,11 @@ describe('group orders query', () => {
 
   it('filters any W group depth and selects rich order fields without pagination', () => {
     const request = createRequest([OrderGroupingDimension.W_MISSION_NAME, OrderGroupingDimension.ORDER_STATUS]);
-    request.groupIds = ['["W Campaign Alpha","W Mission North"]'];
+    request.groupIds = ['["W Mission North","DONE"]'];
     const statement = buildGroupOrdersQuery(database, request).toSQL();
     expect(statement.sql).toContain('"w_mission"."name" IS NOT DISTINCT FROM ?');
+    expect(statement.sql).toContain('"customer_order"."status" IS NOT DISTINCT FROM ?');
+    expect(statement.sql).not.toContain('"root"."name" IS NOT DISTINCT FROM');
     expect(statement.sql).toContain('"customer_order"."priority" as "priority"');
     expect(statement.sql).not.toMatch(/limit|offset|row_number/i);
   });
@@ -28,6 +30,19 @@ describe('group orders query', () => {
     expect(sql).toContain('"origin_order"."id" not in (?)');
   });
 
+  it('selects every order for the root group ID', () => {
+    const request = createRequest([OrderGroupingDimension.ORDER_STATUS]);
+    request.groupIds = ['root', '["DONE"]'];
+    const sql = buildGroupOrdersQuery(database, request).toSQL().sql;
+    expect(sql).toMatch(/\(TRUE\) or \("customer_order"\."status" IS NOT DISTINCT FROM \?\)/);
+  });
+
+  it('rejects a group path deeper than the hierarchy', () => {
+    const request = createRequest([OrderGroupingDimension.ORDER_STATUS]);
+    request.groupIds = ['["DONE","EXPRESS"]'];
+    expect(() => buildGroupOrdersQuery(database, request)).toThrow(BadRequestException);
+  });
+
   it('rejects a source-incompatible hierarchy', () => {
     const request = createRequest([OrderGroupingDimension.A_OBJECTIVE_NAME]);
     expect(() => buildGroupOrdersQuery(database, request)).toThrow(BadRequestException);
@@ -38,7 +53,7 @@ function createRequest(groupBy: OrderGroupingDimension[]): GroupOrdersRequestDto
   const request = new GroupOrdersRequestDto();
   request.wCampaignIds = ['10000000-0000-4000-8000-000000000001'];
   request.groupBy = groupBy;
-  request.groupIds = ['["W Campaign Alpha"]'];
+  request.groupIds = ['root'];
   request.filters = [];
   return request;
 }
