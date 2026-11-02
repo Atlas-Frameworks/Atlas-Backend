@@ -44,6 +44,29 @@ describe('order groups query', () => {
     expect(statement.sql).toContain('"customer_order"."country" is null');
   });
 
+  it('groups W and A orders by O plan W mission names', () => {
+    const request = createRequest(OrderSource.W, [OrderGroupingDimension.O_PLAN_W_MISSION_NAME]);
+    request.aPlanIds = [validAPlanId];
+    const sql = buildOrderGroupsQuery(database, request).toSQL().sql;
+    expect(sql.match(/left join \(select distinct "o_plan_order"\."order_id", "o_plan_mission"\."w_mission_id" from "benchmark_publisher"\."o_plans"/g)).toHaveLength(2);
+    expect(sql).toContain('on "o_plan_link"."order_id" = "customer_order"."id"::text');
+    expect(sql).toContain('left join "benchmark_publisher"."w_missions" as "o_plan_w_mission" on "o_plan_w_mission"."id"::text = "o_plan_link"."w_mission_id"');
+    expect(sql).toContain('jsonb_build_array("o_plan_w_mission"."name")');
+  });
+
+  it('joins O plans when only a filter needs them', () => {
+    const request = createRequest(OrderSource.A, [OrderGroupingDimension.ORDER_STATUS]);
+    request.filters = [{ field: OrderGroupingDimension.O_PLAN_W_MISSION_NAME, operator: OrderFilterOperator.EQ, value: 'W Mission North' }];
+    const sql = buildOrderGroupsQuery(database, request).toSQL().sql;
+    expect(sql).toContain('"o_plan_w_mission"."name" = ?');
+    expect(sql).toContain('"benchmark_publisher"."o_plans"');
+  });
+
+  it('skips the O plan join when no field needs it', () => {
+    const request = createRequest(OrderSource.W, [OrderGroupingDimension.W_MISSION_NAME]);
+    expect(buildOrderGroupsQuery(database, request).toSQL().sql).not.toContain('o_plans');
+  });
+
   it('rejects source-incompatible dimensions', () => {
     const request = createRequest(OrderSource.W, [OrderGroupingDimension.A_OBJECTIVE_NAME]);
     expect(() => buildOrderGroupsQuery(database, request)).toThrow(BadRequestException);

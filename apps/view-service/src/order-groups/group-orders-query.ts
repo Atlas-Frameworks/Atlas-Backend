@@ -52,7 +52,7 @@ function buildOrderSelectionQuery(
   database: Knex,
   selection: OrderSelection,
 ): Knex.QueryBuilder<Record<string, never>, GroupOrder[]> {
-  const queries = buildOrderDomainQueries(database, selection.origin).map(({ query }) => {
+  const queries = buildOrderDomainQueries(database, selection.origin, selection.dimensions).map(({ query }) => {
     const filters = createGroupPathFilters(selection.paths, selection.dimensions);
     applyOrderSelectionFilters(query, filters, selection.orderIds);
     return query.distinct(orderColumns());

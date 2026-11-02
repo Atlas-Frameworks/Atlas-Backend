@@ -69,7 +69,7 @@ function buildMemberships(
   dimensions: readonly GroupingDimensionDefinition[],
 ): Knex.QueryBuilder {
   const pathColumns = dimensions.map(({ column }) => column);
-  const sourceQueries = buildOrderDomainQueries(database, selection).map(({ query }) => query
+  const sourceQueries = buildOrderDomainQueries(database, selection, dimensions).map(({ query }) => query
     .select({ order_id: 'customer_order.id', order_name: 'customer_order.name' })
     .select(buildGroupPathExpression(database, pathColumns)));
   const combinedMemberships = database.queryBuilder().unionAll(sourceQueries, true);

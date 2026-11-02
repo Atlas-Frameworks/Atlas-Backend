@@ -3,6 +3,7 @@ import type { Knex } from 'knex';
 import type { OrderFilterDto } from './dto/order-filter.dto.js';
 import {
   OrderSource,
+  resolveGroupingDimensions,
   supportsSource,
   type GroupingDimensionDefinition,
 } from './order-grouping-dimension.js';
@@ -60,10 +61,13 @@ export function createOrderDomainSelection(request: OrderOriginRequest): OrderDo
 export function buildOrderDomainQueries(
   database: Knex,
   selection: OrderDomainSelection,
+  dimensions: readonly GroupingDimensionDefinition[],
 ): readonly SourceOrderDomainQuery[] {
+  const filterDimensions = resolveGroupingDimensions(selection.filters.map(({ field }) => field));
+  const joinOPlans = [...dimensions, ...filterDimensions].some((dimension) => dimension.viaOPlans === true);
   return resolveOrderSources(selection).map((source) => ({
     source,
-    query: buildSourceOrderDomainQuery(database, selection, source),
+    query: buildSourceOrderDomainQuery(database, selection, source, joinOPlans),
   }));
 }
 
@@ -128,12 +132,28 @@ function buildAQuery(database: Knex): Knex.QueryBuilder {
     .join({ customer_order: `${orderSchema}.orders` }, 'customer_order.a_objective_id', 'a_objective.id');
 }
 
+/** Joins each order to the W missions of every O plan listing it; orders in no O plan get a null mission. */
+function joinOPlanWMissions(database: Knex, query: Knex.QueryBuilder): void {
+  // The ID arrays are varchar, so links are compared as text instead of casting client-written values to uuid.
+  const links = database.from({ o_plan: `${orderSchema}.o_plans` })
+    .joinRaw('CROSS JOIN LATERAL unnest(??) AS o_plan_order(order_id)', ['o_plan.order_ids'])
+    .joinRaw('CROSS JOIN LATERAL unnest(??) AS o_plan_mission(w_mission_id)', ['o_plan.w_mission_ids'])
+    .distinct('o_plan_order.order_id', 'o_plan_mission.w_mission_id');
+  query
+    .leftJoin(links.as('o_plan_link'), 'o_plan_link.order_id', database.raw('??::text', ['customer_order.id']))
+    .leftJoin({ o_plan_w_mission: `${orderSchema}.w_missions` }, function joinOPlanWMission() {
+      this.on(database.raw('??::text = ??', ['o_plan_w_mission.id', 'o_plan_link.w_mission_id']));
+    });
+}
+
 function buildSourceOrderDomainQuery(
   database: Knex,
   selection: OrderDomainSelection,
   source: OrderSource,
+  joinOPlans: boolean,
 ): Knex.QueryBuilder {
   const query = source === OrderSource.W ? buildWQuery(database) : buildAQuery(database);
+  if (joinOPlans) joinOPlanWMissions(database, query);
   applyOriginFilters(query, selection, source);
   query.where('customer_order.source', source);
   applyOrderFilters(query, selection.filters, source);
