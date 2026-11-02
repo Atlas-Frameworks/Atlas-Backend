@@ -102,7 +102,9 @@ Connection strings for local development:
 The schema files create W campaigns, missions and plans; A plans, missions and
 objectives; and a shared orders table under both benchmark schemas. W mission
 to plan is normalized through `w_mission_plans`. Each order points directly to
-either a W plan or A objective, according to its `source`. No entity tables are
+either a W plan or A objective, according to its `source`. `o_plans` groups
+orders and W missions through `order_ids` and `w_mission_ids` arrays, and each W
+mission lists its O plans in `o_plan_ids`. `o_plans` is not a synced table. No entity tables are
 created under `public`.
 
 Every entity has a source `sequence` and `updated_at`. The replicator supplies

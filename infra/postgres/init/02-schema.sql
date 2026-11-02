@@ -44,8 +44,11 @@ BEGIN
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL,
       number integer NOT NULL, status text NOT NULL, country text NOT NULL,
       campaign_id uuid NOT NULL REFERENCES %I.w_campaigns(id),
+      o_plan_ids character varying(255)[] NOT NULL DEFAULT ''{}'',
       sequence bigint NOT NULL CHECK (sequence >= 1), updated_at timestamptz NOT NULL DEFAULT now()
     )', schema_name, schema_name);
+    EXECUTE format('ALTER TABLE %I.w_missions
+      ADD COLUMN IF NOT EXISTS o_plan_ids character varying(255)[] NOT NULL DEFAULT ''{}''', schema_name);
     EXECUTE format('CREATE TABLE IF NOT EXISTS %I.w_plans (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL,
       number integer NOT NULL, status text NOT NULL, country text NOT NULL, category text NOT NULL,
@@ -85,6 +88,11 @@ BEGIN
       CHECK ((source = ''W'' AND w_plan_id IS NOT NULL AND a_objective_id IS NULL)
           OR (source = ''A'' AND a_objective_id IS NOT NULL AND w_plan_id IS NULL))
     )', schema_name, schema_name, schema_name);
+    EXECUTE format('CREATE TABLE IF NOT EXISTS %I.o_plans (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL,
+      order_ids character varying(255)[] NOT NULL DEFAULT ''{}'',
+      w_mission_ids character varying(255)[] NOT NULL DEFAULT ''{}''
+    )', schema_name);
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.w_missions (campaign_id)', index_prefix || '_w_missions_campaign_idx', schema_name);
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.w_missions (campaign_id, status, country, id)', index_prefix || '_w_missions_tree_filter_idx', schema_name);
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.w_mission_plans (plan_id)', index_prefix || '_w_mission_plans_plan_idx', schema_name);
@@ -102,6 +110,8 @@ BEGIN
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.orders (source, status, country)', index_prefix || '_orders_filter_idx', schema_name);
     EXECUTE format('GRANT SELECT ON %I.w_mission_plans TO atlas_reader', schema_name);
     EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %I.w_mission_plans TO atlas_writer', schema_name);
+    EXECUTE format('GRANT SELECT ON %I.o_plans TO atlas_reader', schema_name);
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %I.o_plans TO atlas_writer', schema_name);
   END LOOP;
 END;
 $$;
