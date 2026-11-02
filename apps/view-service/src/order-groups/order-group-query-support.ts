@@ -39,6 +39,11 @@ export interface OrderOriginRequest {
   readonly filters?: readonly OrderFilterDto[];
 }
 
+interface OptionalOrderJoins {
+  readonly oPlans: boolean;
+  readonly oPlanWMissions: boolean;
+}
+
 export interface SourceOrderDomainQuery {
   readonly source: OrderSource;
   readonly query: Knex.QueryBuilder;
@@ -64,10 +69,14 @@ export function buildOrderDomainQueries(
   dimensions: readonly GroupingDimensionDefinition[],
 ): readonly SourceOrderDomainQuery[] {
   const filterDimensions = resolveGroupingDimensions(selection.filters.map(({ field }) => field));
-  const joinOPlans = [...dimensions, ...filterDimensions].some((dimension) => dimension.viaOPlans === true);
+  const fields = [...dimensions, ...filterDimensions];
+  const joins: OptionalOrderJoins = {
+    oPlans: fields.some((field) => field.needsOPlans === true),
+    oPlanWMissions: fields.some((field) => field.needsOPlanWMissions === true),
+  };
   return resolveOrderSources(selection).map((source) => ({
     source,
-    query: buildSourceOrderDomainQuery(database, selection, source, joinOPlans),
+    query: buildSourceOrderDomainQuery(database, selection, source, joins),
   }));
 }
 
@@ -132,17 +141,26 @@ function buildAQuery(database: Knex): Knex.QueryBuilder {
     .join({ customer_order: `${orderSchema}.orders` }, 'customer_order.a_objective_id', 'a_objective.id');
 }
 
-/** Joins each order to the W missions of every O plan listing it; orders in no O plan get a null mission. */
+/** Joins each order to every O plan listing it; orders in no O plan get a null plan. */
+function joinOPlans(database: Knex, query: Knex.QueryBuilder): void {
+  // The ID arrays are varchar, so IDs are compared as text instead of casting client-written values to uuid.
+  const planOrders = database.from({ plan: `${orderSchema}.o_plans` })
+    .joinRaw('CROSS JOIN LATERAL unnest(??) AS plan_order(order_id)', ['plan.order_ids'])
+    .select('plan.id', 'plan.name', 'plan_order.order_id');
+  query.leftJoin(planOrders.as('o_plan'), 'o_plan.order_id', database.raw('??::text', ['customer_order.id']));
+}
+
+/** Joins each order to the W missions of every O plan listing it; orders without such missions get a null mission. */
 function joinOPlanWMissions(database: Knex, query: Knex.QueryBuilder): void {
-  // The ID arrays are varchar, so links are compared as text instead of casting client-written values to uuid.
-  const links = database.from({ o_plan: `${orderSchema}.o_plans` })
-    .joinRaw('CROSS JOIN LATERAL unnest(??) AS o_plan_order(order_id)', ['o_plan.order_ids'])
-    .joinRaw('CROSS JOIN LATERAL unnest(??) AS o_plan_mission(w_mission_id)', ['o_plan.w_mission_ids'])
-    .distinct('o_plan_order.order_id', 'o_plan_mission.w_mission_id');
+  // The ID arrays are varchar, so IDs are compared as text instead of casting client-written values to uuid.
+  const missionOrders = database.from({ plan: `${orderSchema}.o_plans` })
+    .joinRaw('CROSS JOIN LATERAL unnest(??) AS plan_order(order_id)', ['plan.order_ids'])
+    .joinRaw('LEFT JOIN LATERAL unnest(??) AS plan_mission(w_mission_id) ON TRUE', ['plan.w_mission_ids'])
+    .distinct('plan_order.order_id', 'plan_mission.w_mission_id');
   query
-    .leftJoin(links.as('o_plan_link'), 'o_plan_link.order_id', database.raw('??::text', ['customer_order.id']))
+    .leftJoin(missionOrders.as('o_plan_mission'), 'o_plan_mission.order_id', database.raw('??::text', ['customer_order.id']))
     .leftJoin({ o_plan_w_mission: `${orderSchema}.w_missions` }, function joinOPlanWMission() {
-      this.on(database.raw('??::text = ??', ['o_plan_w_mission.id', 'o_plan_link.w_mission_id']));
+      this.on(database.raw('??::text = ??', ['o_plan_w_mission.id', 'o_plan_mission.w_mission_id']));
     });
 }
 
@@ -150,10 +168,11 @@ function buildSourceOrderDomainQuery(
   database: Knex,
   selection: OrderDomainSelection,
   source: OrderSource,
-  joinOPlans: boolean,
+  joins: OptionalOrderJoins,
 ): Knex.QueryBuilder {
   const query = source === OrderSource.W ? buildWQuery(database) : buildAQuery(database);
-  if (joinOPlans) joinOPlanWMissions(database, query);
+  if (joins.oPlans) joinOPlans(database, query);
+  if (joins.oPlanWMissions) joinOPlanWMissions(database, query);
   applyOriginFilters(query, selection, source);
   query.where('customer_order.source', source);
   applyOrderFilters(query, selection.filters, source);

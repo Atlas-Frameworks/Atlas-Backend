@@ -21,11 +21,12 @@ describe('group orders query', () => {
     expect(statement.sql).not.toMatch(/limit|offset|row_number/i);
   });
 
-  it('filters orders by an O plan W mission group', () => {
-    const request = createRequest([OrderGroupingDimension.O_PLAN_W_MISSION_NAME]);
-    request.groupIds = ['["W Mission North"]', '[null]'];
+  it('filters orders by O plan and O plan W mission groups', () => {
+    const request = createRequest([OrderGroupingDimension.O_PLAN_NAME, OrderGroupingDimension.O_PLAN_W_MISSION_NAME]);
+    request.groupIds = ['["O Plan North","W Mission North"]', '[null]'];
     const sql = buildGroupOrdersQuery(database, request).toSQL().sql;
     expect(sql).toContain('"benchmark_publisher"."o_plans"');
+    expect(sql).toContain('"o_plan"."name" IS NOT DISTINCT FROM ?');
     expect(sql).toContain('"o_plan_w_mission"."name" IS NOT DISTINCT FROM ?');
   });
 

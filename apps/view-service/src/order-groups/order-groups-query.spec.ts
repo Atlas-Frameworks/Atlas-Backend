@@ -44,14 +44,32 @@ describe('order groups query', () => {
     expect(statement.sql).toContain('"customer_order"."country" is null');
   });
 
-  it('groups W and A orders by O plan W mission names', () => {
-    const request = createRequest(OrderSource.W, [OrderGroupingDimension.O_PLAN_W_MISSION_NAME]);
+  it('groups W and A orders by O plan names without joining W missions', () => {
+    const request = createRequest(OrderSource.W, [OrderGroupingDimension.O_PLAN_NAME]);
     request.aPlanIds = [validAPlanId];
     const sql = buildOrderGroupsQuery(database, request).toSQL().sql;
-    expect(sql.match(/left join \(select distinct "o_plan_order"\."order_id", "o_plan_mission"\."w_mission_id" from "benchmark_publisher"\."o_plans"/g)).toHaveLength(2);
-    expect(sql).toContain('on "o_plan_link"."order_id" = "customer_order"."id"::text');
-    expect(sql).toContain('left join "benchmark_publisher"."w_missions" as "o_plan_w_mission" on "o_plan_w_mission"."id"::text = "o_plan_link"."w_mission_id"');
+    expect(sql.match(/left join \(select "plan"\."id", "plan"\."name", "plan_order"\."order_id" from "benchmark_publisher"\."o_plans"/g)).toHaveLength(2);
+    expect(sql).toContain('as "o_plan" on "o_plan"."order_id" = "customer_order"."id"::text');
+    expect(sql).toContain('jsonb_build_array("o_plan"."name")');
+    expect(sql).not.toContain('o_plan_w_mission');
+  });
+
+  it('groups by O plan W mission names without the O plan name join', () => {
+    const request = createRequest(OrderSource.W, [OrderGroupingDimension.O_PLAN_W_MISSION_NAME]);
+    const sql = buildOrderGroupsQuery(database, request).toSQL().sql;
+    expect(sql).toContain('LEFT JOIN LATERAL unnest("plan"."w_mission_ids") AS plan_mission(w_mission_id) ON TRUE');
+    expect(sql).toContain('as "o_plan_mission" on "o_plan_mission"."order_id" = "customer_order"."id"::text');
+    expect(sql).toContain('left join "benchmark_publisher"."w_missions" as "o_plan_w_mission" on "o_plan_w_mission"."id"::text = "o_plan_mission"."w_mission_id"');
     expect(sql).toContain('jsonb_build_array("o_plan_w_mission"."name")');
+    expect(sql).not.toContain('as "o_plan" on');
+  });
+
+  it('adds both O plan joins independently when both fields are grouped', () => {
+    const request = createRequest(OrderSource.W, [OrderGroupingDimension.O_PLAN_NAME, OrderGroupingDimension.O_PLAN_W_MISSION_NAME]);
+    const sql = buildOrderGroupsQuery(database, request).toSQL().sql;
+    expect(sql).toContain('as "o_plan" on "o_plan"."order_id" = "customer_order"."id"::text');
+    expect(sql).toContain('as "o_plan_mission" on "o_plan_mission"."order_id" = "customer_order"."id"::text');
+    expect(sql).toContain('jsonb_build_array("o_plan"."name", "o_plan_w_mission"."name")');
   });
 
   it('joins O plans when only a filter needs them', () => {

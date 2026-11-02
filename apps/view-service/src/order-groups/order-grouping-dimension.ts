@@ -20,14 +20,17 @@ export enum OrderGroupingDimension {
   ORDER_NAME = 'ORDER_NAME', ORDER_NUMBER = 'ORDER_NUMBER', ORDER_STATUS = 'ORDER_STATUS',
   ORDER_COUNTRY = 'ORDER_COUNTRY', ORDER_PRIORITY = 'ORDER_PRIORITY',
   ORDER_AMOUNT = 'ORDER_AMOUNT', ORDER_CATEGORY = 'ORDER_CATEGORY',
-  O_PLAN_W_MISSION_NAME = 'O_PLAN_W_MISSION_NAME',
+  O_PLAN_NAME = 'O_PLAN_NAME', O_PLAN_W_MISSION_NAME = 'O_PLAN_W_MISSION_NAME',
 }
+
 
 export interface GroupingDimensionDefinition {
   readonly column: string;
   readonly sources: readonly OrderSource[];
+  /** The column comes from the optional order → O plan join. */
+  readonly needsOPlans?: boolean;
   /** The column comes from the optional order → O plan → W mission join. */
-  readonly viaOPlans?: boolean;
+  readonly needsOPlanWMissions?: boolean;
 }
 
 const bothSources = [OrderSource.W, OrderSource.A] as const;
@@ -65,7 +68,8 @@ const groupingDimensions: Record<OrderGroupingDimension, GroupingDimensionDefini
   [OrderGroupingDimension.ORDER_PRIORITY]: shared('customer_order.priority'),
   [OrderGroupingDimension.ORDER_AMOUNT]: shared('customer_order.amount'),
   [OrderGroupingDimension.ORDER_CATEGORY]: shared('customer_order.category'),
-  [OrderGroupingDimension.O_PLAN_W_MISSION_NAME]: { ...shared('o_plan_w_mission.name'), viaOPlans: true },
+  [OrderGroupingDimension.O_PLAN_NAME]: { ...shared('o_plan.name'), needsOPlans: true },
+  [OrderGroupingDimension.O_PLAN_W_MISSION_NAME]: { ...shared('o_plan_w_mission.name'), needsOPlanWMissions: true },
 };
 
 export function resolveGroupingDimensions(dimensions: readonly OrderGroupingDimension[]): readonly GroupingDimensionDefinition[] {

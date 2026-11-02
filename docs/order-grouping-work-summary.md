@@ -176,7 +176,12 @@ Grouping and filtering use the same trusted field registry. Request values are b
 - `ORDER_PRIORITY`
 - `ORDER_AMOUNT`
 - `ORDER_CATEGORY`
-- `O_PLAN_W_MISSION_NAME`: the names of the W missions in every O plan whose `order_ids` lists the order (`o_plans.order_ids` → `o_plans.w_mission_ids` → `w_missions.name`). This is separate from `W_MISSION_NAME`, which follows `w_mission_plans`. An order linked to several missions appears under each, and an order in no O plan appears under the `null` group. The O plan join is added only when a grouping field or filter uses this field.
+- `O_PLAN_NAME`: the name of every O plan whose `order_ids` lists the order.
+- `O_PLAN_W_MISSION_NAME`: the names of the W missions in those O plans (`o_plans.order_ids` → `o_plans.w_mission_ids` → `w_missions.name`). This is separate from `W_MISSION_NAME`, which follows `w_mission_plans`.
+
+An order linked to several O plans or missions appears under each. An order in no O plan, or only in O plans with no missions, appears under the `null` group.
+
+Each field has its own optional join, added only when a grouping field or filter uses that field, and the two joins are independent. Grouped together, they pair every O plan of an order with every O plan mission of that order: an order in plan P1 (mission M1) and plan P2 (mission M2) also appears under P1 → M2.
 
 Supported filter operators are `EQ`, `NE`, `GT`, `GTE`, `LT`, `LTE`, and `IN`.
 
