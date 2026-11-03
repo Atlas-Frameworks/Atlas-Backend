@@ -19,6 +19,7 @@ export class OrderGroupsService {
 
   async findGroups(request: OrderGroupsRequestDto): Promise<GroupingResponse> {
     const query = buildOrderGroupsQuery(this.database, request);
+    console.log('Generated SQL Query:', query.toSQL()); // Log the generated SQL query
     const rows = await query;
     return buildGroupingResponse(rows);
   }

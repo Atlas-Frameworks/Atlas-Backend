@@ -1,4 +1,4 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Inject, Post } from '@nestjs/common';
 import { GroupOrdersRequestDto } from './dto/group-orders-request.dto.js';
 import { OrderGroupsRequestDto } from './dto/order-groups-request.dto.js';
 import { OrderGroupsService } from './order-groups.service.js';
@@ -9,7 +9,10 @@ import type {
 
 @Controller('order-groups')
 export class OrderGroupsController {
-  constructor(private readonly orderGroupsService: OrderGroupsService) {}
+  constructor(
+    @Inject(OrderGroupsService)
+    private readonly orderGroupsService: OrderGroupsService,
+  ) {}
 
   @Post()
   findGroups(

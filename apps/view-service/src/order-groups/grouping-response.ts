@@ -1,4 +1,5 @@
 import { rootGroupId } from './order-group-query-support.js';
+import type { GroupPath } from './order-group-query-support.js';
 import type {
   GroupingNode,
   GroupingResponse,
@@ -9,6 +10,7 @@ const rootGroupName = 'root';
 
 interface MutableGroupingNode {
   readonly id: string;
+  readonly path: GroupPath;
   readonly name: string;
   readonly parentIds: string[];
   readonly total: number;
@@ -38,22 +40,29 @@ export function buildGroupingResponse(rows: readonly OrderGroupQueryRow[]): Grou
 function createGroups(rows: readonly OrderGroupQueryRow[]): Map<string, GroupRecord> {
   const groups = new Map<string, GroupRecord>();
   const rootTotal = rows.find(isRootRow)?.total;
-  groups.set(rootGroupId, createGroupRecord(rootGroupId, rootGroupName, [], rootTotal));
+  groups.set(rootGroupId, createGroupRecord(rootGroupId, {}, rootGroupName, [], rootTotal));
   rows.filter(isGroupRow).forEach((row) => {
     const id = serializeGroupPath(row.groupPath);
-    groups.set(id, createGroupRecord(id, row.groupName ?? 'null', [toGroupId(row.parentPath)], row.total));
+    groups.set(id, createGroupRecord(
+      id,
+      row.groupPath,
+      row.groupName ?? 'null',
+      [toGroupId(row.parentPath)],
+      row.total,
+    ));
   });
   return groups;
 }
 
 function createGroupRecord(
   id: string,
+  path: GroupPath,
   name: string,
   parentIds: string[],
   total: OrderGroupQueryRow['total'] | undefined,
 ): GroupRecord {
   return {
-    node: { id, name, parentIds, total: Number(total ?? 0), children: [] },
+    node: { id, path, name, parentIds, total: Number(total ?? 0), children: [] },
     childIds: new Set<string>(),
   };
 }
@@ -146,12 +155,12 @@ function toGroupingNode(order: OrderNodeRecord): GroupingNode {
 }
 
 /** Top-level groups have no parent path and no-grouping orders have an empty one: both belong to the root. */
-function toGroupId(path: readonly unknown[] | null): string {
-  return path === null || path.length === 0 ? rootGroupId : serializeGroupPath(path);
+function toGroupId(path: GroupPath | null): string {
+  return path === null || Object.keys(path).length === 0 ? rootGroupId : serializeGroupPath(path);
 }
 
-function serializeGroupPath(path: readonly unknown[]): string {
-  return `[${path.map((value) => JSON.stringify(value) ?? 'null').join(', ')}]`;
+function serializeGroupPath(path: GroupPath): string {
+  return JSON.stringify(Object.fromEntries(Object.entries(path).sort(([left], [right]) => left.localeCompare(right))));
 }
 
 function isRootRow(row: OrderGroupQueryRow): boolean {

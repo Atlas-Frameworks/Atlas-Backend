@@ -1,5 +1,8 @@
+import type { GroupPath } from './order-group-query-support.js';
+
 export interface GroupingNode {
   readonly id: string;
+  readonly path?: GroupPath;
   readonly name: string;
   readonly parentIds: readonly string[];
   readonly total: number;
@@ -26,7 +29,7 @@ export interface GroupOrdersResponse {
 }
 
 export interface PaginationOverride {
-  readonly path: readonly unknown[];
+  readonly path: GroupPath;
   readonly limit: number;
   readonly offset: number;
 }
@@ -34,8 +37,8 @@ export interface PaginationOverride {
 export interface OrderGroupQueryRow {
   readonly rowKind: 'root' | 'group' | 'order';
   readonly level: number;
-  readonly groupPath: readonly unknown[];
-  readonly parentPath: readonly unknown[] | null;
+  readonly groupPath: GroupPath;
+  readonly parentPath: GroupPath | null;
   readonly groupName: string | null;
   readonly total: string | number | null;
   readonly orderId: string | null;

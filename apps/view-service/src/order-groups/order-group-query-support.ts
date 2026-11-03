@@ -2,10 +2,12 @@ import { BadRequestException } from '@nestjs/common';
 import type { Knex } from 'knex';
 import type { OrderFilterDto } from './dto/order-filter.dto.js';
 import {
+  OrderGroupingDimension,
   OrderSource,
   resolveGroupingDimensions,
   supportsSource,
   type GroupingDimensionDefinition,
+  type ResolvedGroupingDimension,
 } from './order-grouping-dimension.js';
 import { applyOrderFilters } from './order-filter.js';
 
@@ -13,10 +15,13 @@ export const orderSchema = 'benchmark_publisher';
 /** ID of the hard-coded node above every grouping level; it stands for the empty path. */
 export const rootGroupId = 'root';
 export type GroupPathValue = string | number | boolean | null;
+export type GroupPath = Readonly<Partial<Record<OrderGroupingDimension, GroupPathValue>>>;
 
 export interface GroupPathFilter {
-  readonly columns: readonly string[];
-  readonly path: readonly GroupPathValue[];
+  readonly values: readonly {
+    readonly column: string;
+    readonly value: GroupPathValue;
+  }[];
 }
 
 export interface OrderDomainSelection {
@@ -99,28 +104,37 @@ export function validateDimensionsForSources(
 }
 
 /** Creates the JSON path expression used as the stable group identifier. */
-export function buildGroupPathExpression(database: Knex, columns: readonly string[]): Knex.Raw {
-  const placeholders = columns.map(() => '??').join(', ');
-  return database.raw(`jsonb_build_array(${placeholders}) AS full_group_path`, [...columns]);
+export function buildGroupPathExpression(
+  database: Knex,
+  dimensions: readonly ResolvedGroupingDimension[],
+): Knex.Raw {
+  const placeholders = dimensions.map(() => '?::text, ??').join(', ');
+  const bindings = dimensions.flatMap(({ field, column }) => [field, column]);
+  return database.raw(`jsonb_build_object(${placeholders}) AS full_group_path`, bindings);
 }
 
 /** Parses and validates the value types of a serialized group path. */
-export function parseSerializedGroupPath(pathId: string): readonly GroupPathValue[] {
+export function parseSerializedGroupPath(pathId: string): GroupPath {
   let path: unknown;
-  try { path = JSON.parse(pathId) as unknown; } catch { throw new BadRequestException(`Group path is not a JSON array: ${pathId}`); }
-  if (!Array.isArray(path) || !path.every(isGroupValue)) throw new BadRequestException(`Group path is invalid: ${pathId}`);
+  try { path = JSON.parse(pathId) as unknown; } catch { throw new BadRequestException(`Group path is not a JSON object: ${pathId}`); }
+  return parseGroupPath(path);
+}
+
+/** Validates a dimension-keyed path supplied directly as a JSON object. */
+export function parseGroupPath(path: unknown): GroupPath {
+  if (!isGroupPath(path)) throw new BadRequestException('Group path is invalid');
   return path;
 }
 
 /** Parses a group ID from a response, mapping the root ID to the empty path. */
-export function parseGroupId(groupId: string): readonly GroupPathValue[] {
-  return groupId === rootGroupId ? [] : parseSerializedGroupPath(groupId);
+export function parseGroupId(groupId: string): GroupPath {
+  return groupId === rootGroupId ? {} : parseSerializedGroupPath(groupId);
 }
 
 /** Adds a grouped OR condition containing null-safe filters for every path. */
 export function applyGroupPathFilters(query: Knex.QueryBuilder, filters: readonly GroupPathFilter[]): void {
   query.where((pathsQuery) => {
-    filters.forEach(({ columns, path }) => pathsQuery.orWhere((pathQuery) => applySingleGroupPathFilter(pathQuery, columns, path)));
+    filters.forEach(({ values }) => pathsQuery.orWhere((pathQuery) => applySingleGroupPathFilter(pathQuery, values)));
   });
 }
 
@@ -203,16 +217,21 @@ function hasAOrigin(selection: OrderDomainSelection): boolean {
   return selection.aPlanIds.length > 0 || selection.aMissionIds.length > 0 || selection.aObjectiveIds.length > 0;
 }
 
-function applySingleGroupPathFilter(query: Knex.QueryBuilder, columns: readonly string[], path: readonly GroupPathValue[]): void {
+function applySingleGroupPathFilter(query: Knex.QueryBuilder, values: GroupPathFilter['values']): void {
   // The empty (root) path matches every order; an empty nested group would be dropped from the OR instead.
-  if (columns.length === 0) query.whereRaw('TRUE');
-  columns.forEach((column, index) => {
-    const value = path[index];
-    if (value === undefined) throw new BadRequestException('Group path is shorter than its columns');
+  if (values.length === 0) query.whereRaw('TRUE');
+  values.forEach(({ column, value }) => {
     query.whereRaw('?? IS NOT DISTINCT FROM ?', [column, value]);
   });
 }
 
 function isGroupValue(value: unknown): value is GroupPathValue {
   return value === null || ['string', 'number', 'boolean'].includes(typeof value);
+}
+
+function isGroupPath(value: unknown): value is GroupPath {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  return Object.entries(value).every(([field, fieldValue]) => (
+    Object.values(OrderGroupingDimension).includes(field as OrderGroupingDimension) && isGroupValue(fieldValue)
+  ));
 }

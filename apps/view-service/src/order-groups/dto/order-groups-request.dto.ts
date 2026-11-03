@@ -5,13 +5,13 @@ import {
   IsArray,
   IsEnum,
   IsInt,
-  IsObject,
   IsOptional,
   Max,
   Min,
 } from 'class-validator';
 import { ValidateNested } from 'class-validator';
 import { OrderFilterDto } from './order-filter.dto.js';
+import { GroupPaginationDto } from './group-pagination.dto.js';
 import { OrderOriginSelectionDto } from './order-origin-selection.dto.js';
 import { OrderGroupingDimension } from '../order-grouping-dimension.js';
 
@@ -37,6 +37,9 @@ export class OrderGroupsRequestDto extends OrderOriginSelectionDto {
   defaultLimit = 10;
 
   @IsOptional()
-  @IsObject()
-  pagination?: Record<string, unknown>;
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => GroupPaginationDto)
+  pagination: GroupPaginationDto[] = [];
 }

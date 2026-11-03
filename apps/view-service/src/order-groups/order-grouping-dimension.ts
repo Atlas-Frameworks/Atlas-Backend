@@ -33,6 +33,10 @@ export interface GroupingDimensionDefinition {
   readonly needsOPlanWMissions?: boolean;
 }
 
+export interface ResolvedGroupingDimension extends GroupingDimensionDefinition {
+  readonly field: OrderGroupingDimension;
+}
+
 const bothSources = [OrderSource.W, OrderSource.A] as const;
 const groupingDimensions: Record<OrderGroupingDimension, GroupingDimensionDefinition> = {
   [OrderGroupingDimension.W_CAMPAIGN_NAME]: w('root.name'),
@@ -72,8 +76,8 @@ const groupingDimensions: Record<OrderGroupingDimension, GroupingDimensionDefini
   [OrderGroupingDimension.O_PLAN_W_MISSION_NAME]: { ...shared('o_plan_w_mission.name'), needsOPlanWMissions: true },
 };
 
-export function resolveGroupingDimensions(dimensions: readonly OrderGroupingDimension[]): readonly GroupingDimensionDefinition[] {
-  return dimensions.map((dimension) => groupingDimensions[dimension]);
+export function resolveGroupingDimensions(dimensions: readonly OrderGroupingDimension[]): readonly ResolvedGroupingDimension[] {
+  return dimensions.map((field) => ({ field, ...groupingDimensions[field] }));
 }
 
 export function supportsSource(definition: GroupingDimensionDefinition, source: OrderSource): boolean {

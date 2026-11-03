@@ -1,14 +1,17 @@
 import { BadRequestException } from '@nestjs/common';
 import type { Knex } from 'knex';
 import { GroupOrdersRequestDto } from './dto/group-orders-request.dto.js';
-import { resolveGroupingDimensions, type GroupingDimensionDefinition } from './order-grouping-dimension.js';
+import {
+  resolveGroupingDimensions,
+  type ResolvedGroupingDimension,
+} from './order-grouping-dimension.js';
 import {
   applyGroupPathFilters,
   buildOrderDomainQueries,
   createOrderDomainSelection,
   resolveOrderSources,
+  type GroupPath,
   type GroupPathFilter,
-  type GroupPathValue,
   type OrderDomainSelection,
   parseGroupId,
   validateDimensionsForSources,
@@ -17,8 +20,8 @@ import type { GroupOrder } from './order-groups.types.js';
 
 interface OrderSelection {
   readonly origin: OrderDomainSelection;
-  readonly dimensions: readonly GroupingDimensionDefinition[];
-  readonly paths: readonly (readonly GroupPathValue[])[];
+  readonly dimensions: readonly ResolvedGroupingDimension[];
+  readonly paths: readonly GroupPath[];
   readonly orderIds: readonly string[];
 }
 
@@ -30,13 +33,12 @@ export function buildGroupOrdersQuery(
   const dimensions = resolveGroupingDimensions(request.groupBy);
   const origin = createOrderDomainSelection(request);
   validateDimensionsForSources(dimensions, resolveOrderSources(origin));
-  const maximumDepth = dimensions.length;
-  const includedPaths = parseGroupPaths(request.groupIds, maximumDepth);
+  const includedPaths = parseGroupPaths(request.groupIds, dimensions);
   assertIncludedPaths(includedPaths);
   const includedOrders = buildOrderSelectionQuery(database, {
     origin, dimensions, paths: includedPaths, orderIds: request.findNodes ?? [],
   });
-  const excludedPaths = parseGroupPaths(request.excludeGroups ?? [], maximumDepth);
+  const excludedPaths = parseGroupPaths(request.excludeGroups ?? [], dimensions);
   if (excludedPaths.length === 0) {
     if ((request.excludeNodes ?? []).length > 0) includedOrders.whereNotIn('origin_order.id', request.excludeNodes);
     return includedOrders;
@@ -96,26 +98,33 @@ function orderColumns(): Record<keyof GroupOrder, string> {
   };
 }
 
-function parseGroupPaths(groupIds: readonly string[], maximumDepth: number): readonly (readonly GroupPathValue[])[] {
+function parseGroupPaths(
+  groupIds: readonly string[],
+  dimensions: readonly ResolvedGroupingDimension[],
+): readonly GroupPath[] {
   return groupIds.map((groupId) => {
     const path = parseGroupId(groupId);
-    if (path.length > maximumDepth) {
-      throw new BadRequestException(`Group path must contain at most ${maximumDepth} values`);
-    }
+    if (!isHierarchyPrefix(path, dimensions)) throw new BadRequestException('Group path fields must form a hierarchy prefix');
     return path;
   });
 }
 
-function assertIncludedPaths(paths: readonly (readonly GroupPathValue[])[]): void {
+function assertIncludedPaths(paths: readonly GroupPath[]): void {
   if (paths.length === 0) throw new BadRequestException('At least one group ID is required');
 }
 
 function createGroupPathFilters(
-  paths: readonly (readonly GroupPathValue[])[],
-  dimensions: readonly GroupingDimensionDefinition[],
+  paths: readonly GroupPath[],
+  dimensions: readonly ResolvedGroupingDimension[],
 ): readonly GroupPathFilter[] {
-  return paths.map((path) => ({
-    columns: dimensions.slice(0, path.length).map(({ column }) => column),
-    path,
-  }));
+  return paths.map((path) => ({ values: dimensions
+    .filter(({ field }) => Object.hasOwn(path, field))
+    .map(({ field, column }) => ({ column, value: path[field] ?? null })) }));
+}
+
+function isHierarchyPrefix(path: GroupPath, dimensions: readonly ResolvedGroupingDimension[]): boolean {
+  const pathFields = Object.keys(path);
+  if (pathFields.length > dimensions.length) return false;
+  const prefixFields = dimensions.slice(0, pathFields.length).map(({ field }) => field);
+  return pathFields.every((field) => prefixFields.includes(field as ResolvedGroupingDimension['field']));
 }

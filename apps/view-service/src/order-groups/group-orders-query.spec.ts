@@ -12,7 +12,7 @@ describe('group orders query', () => {
 
   it('filters any W group depth and selects rich order fields without pagination', () => {
     const request = createRequest([OrderGroupingDimension.W_MISSION_NAME, OrderGroupingDimension.ORDER_STATUS]);
-    request.groupIds = ['["W Mission North","DONE"]'];
+    request.groupIds = ['{"W_MISSION_NAME":"W Mission North","ORDER_STATUS":"DONE"}'];
     const statement = buildGroupOrdersQuery(database, request).toSQL();
     expect(statement.sql).toContain('"w_mission"."name" IS NOT DISTINCT FROM ?');
     expect(statement.sql).toContain('"customer_order"."status" IS NOT DISTINCT FROM ?');
@@ -23,7 +23,10 @@ describe('group orders query', () => {
 
   it('filters orders by O plan and O plan W mission groups', () => {
     const request = createRequest([OrderGroupingDimension.O_PLAN_NAME, OrderGroupingDimension.O_PLAN_W_MISSION_NAME]);
-    request.groupIds = ['["O Plan North","W Mission North"]', '[null]'];
+    request.groupIds = [
+      '{"O_PLAN_NAME":"O Plan North","O_PLAN_W_MISSION_NAME":"W Mission North"}',
+      '{"O_PLAN_NAME":null}',
+    ];
     const sql = buildGroupOrdersQuery(database, request).toSQL().sql;
     expect(sql).toContain('"benchmark_publisher"."o_plans"');
     expect(sql).toContain('"o_plan"."name" IS NOT DISTINCT FROM ?');
@@ -41,14 +44,14 @@ describe('group orders query', () => {
 
   it('selects every order for the root group ID', () => {
     const request = createRequest([OrderGroupingDimension.ORDER_STATUS]);
-    request.groupIds = ['root', '["DONE"]'];
+    request.groupIds = ['root', '{"ORDER_STATUS":"DONE"}'];
     const sql = buildGroupOrdersQuery(database, request).toSQL().sql;
     expect(sql).toMatch(/\(TRUE\) or \("customer_order"\."status" IS NOT DISTINCT FROM \?\)/);
   });
 
   it('rejects a group path deeper than the hierarchy', () => {
     const request = createRequest([OrderGroupingDimension.ORDER_STATUS]);
-    request.groupIds = ['["DONE","EXPRESS"]'];
+    request.groupIds = ['{"ORDER_STATUS":"DONE","ORDER_COUNTRY":"EXPRESS"}'];
     expect(() => buildGroupOrdersQuery(database, request)).toThrow(BadRequestException);
   });
 

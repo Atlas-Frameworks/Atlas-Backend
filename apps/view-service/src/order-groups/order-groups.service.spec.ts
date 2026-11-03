@@ -31,7 +31,7 @@ describe('OrderGroupsService', () => {
     const service = new OrderGroupsService({} as Knex);
     await expect(service.findGroups({} as never)).resolves.toEqual({
       nodes: [{
-        id: 'root', name: 'root',
+        id: 'root', path: {}, name: 'root',
         parentIds: [], total: 1, children: [],
       }],
     });

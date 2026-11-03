@@ -10,7 +10,12 @@ describe('OrderGroupsRequestDto', () => {
       wCampaignIds: [validRootId],
       groupBy: [OrderGroupingDimension.W_MISSION_NAME, OrderGroupingDimension.ORDER_STATUS],
       filters: [{ field: OrderGroupingDimension.ORDER_COUNTRY, operator: OrderFilterOperator.EQ, value: 'IL' }],
-      defaultLimit: 25, pagination: {},
+      defaultLimit: 25,
+      pagination: [{
+        path: { W_MISSION_NAME: 'W Mission North', ORDER_STATUS: 'NEW' },
+        limit: 10,
+        offset: 0,
+      }],
     });
     await expect(validate(request)).resolves.toEqual([]);
   });

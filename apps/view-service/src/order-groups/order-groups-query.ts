@@ -1,13 +1,17 @@
 import { BadRequestException } from '@nestjs/common';
 import type { Knex } from 'knex';
 import { OrderGroupsRequestDto } from './dto/order-groups-request.dto.js';
+import type { GroupPaginationDto } from './dto/group-pagination.dto.js';
 import { resolveGroupingDimensions } from './order-grouping-dimension.js';
-import type { GroupingDimensionDefinition } from './order-grouping-dimension.js';
+import type {
+  OrderGroupingDimension,
+  ResolvedGroupingDimension,
+} from './order-grouping-dimension.js';
 import {
   buildOrderDomainQueries,
   buildGroupPathExpression,
   createOrderDomainSelection,
-  parseGroupId,
+  parseGroupPath,
   resolveOrderSources,
   validateDimensionsForSources,
 } from './order-group-query-support.js';
@@ -17,14 +21,6 @@ import type {
   PaginationOverride,
 } from './order-groups.types.js';
 
-interface PaginationValues {
-  readonly limit: number;
-  readonly offset: number;
-}
-
-const maximumPageSize = 1000;
-const maximumPostgresInteger = 2_147_483_647;
-
 /** Returns the root total, flat group rows and paginated leaf-order memberships. */
 export function buildOrderGroupsQuery(
   database: Knex,
@@ -33,11 +29,10 @@ export function buildOrderGroupsQuery(
   const dimensions = resolveGroupingDimensions(request.groupBy);
   const selection = createOrderDomainSelection(request);
   validateDimensionsForSources(dimensions, resolveOrderSources(selection));
-  const pathLength = dimensions.length;
-  const pagination = parsePaginationOverrides(request.pagination, pathLength);
-  const resultRows = buildResultRows(database, pathLength);
+  const pagination = parsePaginationOverrides(request.pagination, request.groupBy);
+  const resultRows = buildResultRows(database, dimensions);
   const query = database.with('memberships', buildMemberships(database, selection, dimensions));
-  if (pathLength > 0) query.with('node_counts', buildNodeCounts(database, pathLength));
+  if (dimensions.length > 0) query.with('node_counts', buildNodeCounts(database, dimensions));
   return query
     .with('pagination_overrides', buildPaginationOverrides(database, pagination))
     .with('ranked_leaf_orders', buildRankedLeafOrders(database, request.defaultLimit))
@@ -48,17 +43,17 @@ export function buildOrderGroupsQuery(
 
 /** Parses and validates pagination overrides keyed by serialized leaf path. */
 export function parsePaginationOverrides(
-  value: Record<string, unknown> | undefined,
-  pathLength: number,
+  value: readonly GroupPaginationDto[] | undefined,
+  fields: readonly OrderGroupingDimension[],
 ): readonly PaginationOverride[] {
   if (value === undefined) return [];
   const paths = new Set<string>();
-  return Object.entries(value).map(([pathId, page]) => {
-    const path = parsePath(pathId, pathLength);
-    const canonicalPath = JSON.stringify(path);
-    if (paths.has(canonicalPath)) throw new BadRequestException(`Pagination path is duplicated: ${pathId}`);
+  return value.map((page) => {
+    const path = parsePath(page.path, fields);
+    const canonicalPath = serializePath(path);
+    if (paths.has(canonicalPath)) throw new BadRequestException(`Pagination path is duplicated: ${canonicalPath}`);
     paths.add(canonicalPath);
-    return { path, ...parsePaginationValues(page, pathId) };
+    return { path, limit: page.limit, offset: page.offset };
   });
 }
 
@@ -66,12 +61,11 @@ export function parsePaginationOverrides(
 function buildMemberships(
   database: Knex,
   selection: OrderDomainSelection,
-  dimensions: readonly GroupingDimensionDefinition[],
+  dimensions: readonly ResolvedGroupingDimension[],
 ): Knex.QueryBuilder {
-  const pathColumns = dimensions.map(({ column }) => column);
   const sourceQueries = buildOrderDomainQueries(database, selection, dimensions).map(({ query }) => query
     .select({ order_id: 'customer_order.id', order_name: 'customer_order.name' })
-    .select(buildGroupPathExpression(database, pathColumns)));
+    .select(buildGroupPathExpression(database, dimensions)));
   const combinedMemberships = database.queryBuilder().unionAll(sourceQueries, true);
   return database.from(combinedMemberships.as('origin_membership')).distinct(
     'origin_membership.order_id',
@@ -81,27 +75,44 @@ function buildMemberships(
 }
 
 /** Counts each hierarchy depth directly from the filtered memberships. */
-function buildNodeCounts(database: Knex, pathLength: number): Knex.QueryBuilder {
-  const levels = Array.from({ length: pathLength }, (_, index) => index + 1);
-  const queries = levels.map((level) => buildNodeCountLevel(database, level));
+function buildNodeCounts(database: Knex, dimensions: readonly ResolvedGroupingDimension[]): Knex.QueryBuilder {
+  const levels = dimensions.map((_, index) => index + 1);
+  const queries = levels.map((level) => buildNodeCountLevel(database, dimensions.slice(0, level)));
   if (queries.length === 0) throw new BadRequestException('At least one grouping level is required');
   return database.queryBuilder().unionAll(queries, true);
 }
 
 /** Counts distinct orders for one fixed path depth. */
-function buildNodeCountLevel(database: Knex, level: number): Knex.QueryBuilder {
-  const pathValueExpressions = Array.from({ length: level }, () => '?? -> (?::integer)').join(', ');
-  const pathBindings = Array.from({ length: level }, (_, index) => ['membership.full_group_path', index]).flat();
+function buildNodeCountLevel(
+  database: Knex,
+  dimensions: readonly ResolvedGroupingDimension[],
+): Knex.QueryBuilder {
+  const level = dimensions.length;
+  const pathValueExpressions = dimensions.map(() => '?::text, ?? -> (?::text)').join(', ');
+  const pathBindings = dimensions.flatMap(({ field }) => [field, 'membership.full_group_path', field]);
+  const currentField = dimensions.at(-1)?.field;
+  if (currentField === undefined) throw new BadRequestException('A group level requires at least one field');
   const membershipsAtLevel = database.from({ membership: 'memberships' }).distinct().select(
     'membership.order_id',
     database.raw('?::integer AS level', [level]),
-    database.raw(`jsonb_build_array(${pathValueExpressions}) AS group_path`, pathBindings),
-    database.raw('?? -> (?::integer) AS group_name', ['membership.full_group_path', level - 1]),
+    database.raw(`jsonb_build_object(${pathValueExpressions}) AS group_path`, pathBindings),
+    database.raw('?::text AS group_field', [currentField]),
+    database.raw('?? -> (?::text) AS group_name', ['membership.full_group_path', currentField]),
   );
   return database.from(membershipsAtLevel.as('node_membership'))
-    .select('node_membership.level', 'node_membership.group_path', 'node_membership.group_name')
+    .select(
+      'node_membership.level',
+      'node_membership.group_path',
+      'node_membership.group_field',
+      'node_membership.group_name',
+    )
     .count({ total: 'node_membership.order_id' })
-    .groupBy('node_membership.level', 'node_membership.group_path', 'node_membership.group_name');
+    .groupBy(
+      'node_membership.level',
+      'node_membership.group_path',
+      'node_membership.group_field',
+      'node_membership.group_name',
+    );
 }
 
 /** Converts validated pagination overrides into a queryable relation. */
@@ -140,9 +151,9 @@ function buildPaginatedLeafOrders(database: Knex): Knex.QueryBuilder {
 }
 
 /** Unifies the root total, group rows and order memberships without constructing response JSON. */
-function buildResultRows(database: Knex, leafLevel: number): Knex.QueryBuilder {
-  const groupRows = leafLevel > 0 ? [buildGroupRows(database)] : [];
-  return buildRootTotalRow(database).unionAll([...groupRows, buildOrderMembershipRows(database, leafLevel)]);
+function buildResultRows(database: Knex, dimensions: readonly ResolvedGroupingDimension[]): Knex.QueryBuilder {
+  const groupRows = dimensions.length > 0 ? [buildGroupRows(database)] : [];
+  return buildRootTotalRow(database).unionAll([...groupRows, buildOrderMembershipRows(database, dimensions.length)]);
 }
 
 /** Returns the distinct order count for the root node that the response adds itself. */
@@ -150,7 +161,7 @@ function buildRootTotalRow(database: Knex): Knex.QueryBuilder {
   return database.from({ membership: 'memberships' }).select(
     database.raw("'root'::text AS ??", ['rowKind']),
     database.raw('0::integer AS ??', ['level']),
-    database.raw("'[]'::jsonb AS ??", ['groupPath']),
+    database.raw("'{}'::jsonb AS ??", ['groupPath']),
     database.raw('NULL::jsonb AS ??', ['parentPath']),
     database.raw('NULL::text AS ??', ['groupName']),
     database.raw('count(DISTINCT ??) AS ??', ['membership.order_id', 'total']),
@@ -164,8 +175,8 @@ function buildGroupRows(database: Knex): Knex.QueryBuilder {
   return database.from({ node: 'node_counts' }).select(
     database.raw("'group'::text AS ??", ['rowKind']),
     { level: 'node.level', groupPath: 'node.group_path' },
-    database.raw('CASE WHEN ?? = 1 THEN NULL::jsonb ELSE ?? - (?? - 1) END AS ??', [
-      'node.level', 'node.group_path', 'node.level', 'parentPath',
+    database.raw('CASE WHEN ?? = 1 THEN NULL::jsonb ELSE ?? - ?? END AS ??', [
+      'node.level', 'node.group_path', 'node.group_field', 'parentPath',
     ]),
     database.raw("COALESCE(?? #>> '{}', 'null') AS ??", ['node.group_name', 'groupName']),
     { total: 'node.total' },
@@ -187,29 +198,17 @@ function buildOrderMembershipRows(database: Knex, leafLevel: number): Knex.Query
   );
 }
 
-function parsePath(pathId: string, expectedLength: number): readonly unknown[] {
-  const path = parseGroupId(pathId);
-  if (path.length === expectedLength) return path;
-  throw new BadRequestException(`Pagination key must contain ${expectedLength} path values: ${pathId}`);
+function parsePath(value: unknown, fields: readonly OrderGroupingDimension[]): PaginationOverride['path'] {
+  const path = parseGroupPath(value);
+  if (hasExactlyFields(path, fields)) return path;
+  throw new BadRequestException(`Pagination path must contain fields: ${fields.join(', ')}`);
 }
 
-function parsePaginationValues(value: unknown, pathId: string): PaginationValues {
-  if (!isRecord(value)) throw new BadRequestException(`Pagination value must be an object: ${pathId}`);
-  const limit = value['limit'];
-  const offset = value['offset'];
-  if (!isIntegerInRange(limit, 1, maximumPageSize)) {
-    throw new BadRequestException(`Pagination limit must be between 1 and ${maximumPageSize}: ${pathId}`);
-  }
-  if (!isIntegerInRange(offset, 0, maximumPostgresInteger)) {
-    throw new BadRequestException(`Pagination offset must be non-negative: ${pathId}`);
-  }
-  return { limit, offset };
+function hasExactlyFields(path: PaginationOverride['path'], fields: readonly OrderGroupingDimension[]): boolean {
+  const pathFields = Object.keys(path);
+  return pathFields.length === fields.length && fields.every((field) => Object.hasOwn(path, field));
 }
 
-function isIntegerInRange(value: unknown, minimum: number, maximum: number): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= minimum && value <= maximum;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+function serializePath(path: PaginationOverride['path']): string {
+  return JSON.stringify(Object.fromEntries(Object.entries(path).sort(([left], [right]) => left.localeCompare(right))));
 }
